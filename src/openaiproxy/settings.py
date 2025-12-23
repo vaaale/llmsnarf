@@ -12,7 +12,10 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    llmproxy_config_path: Path = Field(default=Path("./llmproxy.yaml"))
+    llmproxy_config_path: Path = Field(
+        default=Path("./llmproxy.yaml"),
+        validation_alias=AliasChoices("LLMPROXY_CONFIG_PATH"),
+    )
     logs_dir: Path | None = Field(default=None, validation_alias=AliasChoices("LOGS_DIR"))
     trace_dir: Path | None = Field(default=None, validation_alias=AliasChoices("TRACE_DIR"))
 

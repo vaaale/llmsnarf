@@ -13,7 +13,7 @@ trace_dir.mkdir(parents=True, exist_ok=True)
 app = create_app(config_repository=config_repository, logs_dir=logs_dir, trace_dir=trace_dir)
 
 
-if __name__ == "__main__":
+def main():
     import uvicorn
 
     listen_host, listen_port = resolve_listen_host_port(settings, config_repository)
@@ -23,3 +23,6 @@ if __name__ == "__main__":
         port=listen_port,
         reload=False
     )
+
+if __name__ == "__main__":
+    main()
