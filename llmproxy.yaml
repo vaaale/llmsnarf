@@ -1,0 +1,28 @@
+llmproxy:
+  host: "0.0.0.0"
+  port: 8000
+  logs_dir: "./logs"
+  trace_dir: "./traces"
+
+  endpoints:
+    default:
+      base_url: "http://wingman.akhbar.home:8000/v1"
+      api_key: sk-123
+      models: [ '*' ]
+      log: true
+
+    localai:
+      base_url: "http://wingman.akhbar.home:8000/v1"
+      api_key: sk-123
+      models: [ 'gpt-5.1' ]
+      log: true
+
+    localai2:
+      base_url: "http://wingman.akhbar.home:9000/v1"
+      api_key: sk-321
+      models: [ 'gpt-5.2','qwen3-coder' ]
+      aliases:
+        "gpt-5.2": "gpt-5.1"
+        "opus-4.5": "qwen3-coder"
+      log: true
+

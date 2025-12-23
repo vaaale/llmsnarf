@@ -38,12 +38,12 @@ OPENAI_API_KEY=sk-your-actual-key-here
 
 Run the proxy server:
 ```bash
-python main.py
+python src/main.py
 ```
 
 Or with uvicorn directly:
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn openaiproxy.asgi:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 The server will start on `http://localhost:8000`
@@ -94,8 +94,8 @@ Configure the proxy using environment variables in your `.env` file:
 | `OPENAI_API_KEY` | Your OpenAI API key | (required) |
 | `OPENAI_API_BASE` | Base URL for OpenAI API | `https://api.openai.com/v1` |
 | `LOGS_DIR` | Directory to save request logs | `./logs` |
-| `LISTEN_HOST` | Host address to bind the server | `0.0.0.0` |
-| `LISTEN_PORT` | Port to bind the server | `8000` |
+| `HOST` | Host address to bind the server | `0.0.0.0` |
+| `PORT` | Port to bind the server | `8000` |
 
 ## Request and Response Logs
 
