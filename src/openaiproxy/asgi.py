@@ -3,7 +3,7 @@ from __future__ import annotations
 from openaiproxy.bootstrap import resolve_logs_trace_dirs
 from openaiproxy.api.app import create_app
 from openaiproxy.settings import Settings
-from openaiproxy.yaml.yaml_repository import YAMLLLMProxyConfigRepository
+from openaiproxy.yaml_repository.yaml_repository import YAMLLLMProxyConfigRepository
 
 
 settings = Settings()

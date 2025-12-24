@@ -1,7 +1,7 @@
 from openaiproxy.api.app import create_app
 from openaiproxy.bootstrap import resolve_listen_host_port, resolve_logs_trace_dirs
 from openaiproxy.settings import Settings
-from openaiproxy.yaml.yaml_repository import YAMLLLMProxyConfigRepository
+from openaiproxy.yaml_repository.yaml_repository import YAMLLLMProxyConfigRepository
 
 settings = Settings()
 
