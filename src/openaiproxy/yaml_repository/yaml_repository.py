@@ -41,6 +41,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 log_enabled = entry.get("log")
                 models = entry.get("models")
                 aliases_raw = entry.get("aliases")
+                substitute_role = entry.get("substitute_role" or {})
 
                 if not base_url or not models:
                     continue
@@ -62,6 +63,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                         models=[str(m) for m in models],
                         aliases=aliases,
                         log=bool(True if log_enabled is None else log_enabled),
+                        substitute_role=substitute_role
                     )
                 )
 

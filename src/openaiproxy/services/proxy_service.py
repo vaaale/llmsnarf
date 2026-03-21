@@ -80,6 +80,14 @@ class ProxyService:
 
         await anyio.to_thread.run_sync(_write)
 
+    async def substitute_role(self, payload: dict, endpoint_config: EndpointConfig) -> dict:
+        substitutions = endpoint_config.substitute_role
+        if "messages" in payload and substitutions:
+            for message in payload["messages"]:
+                if message["role"] in substitutions:
+                    message["role"] = substitutions.get(message["role"], message["role"])
+        return payload
+
     async def proxy(self, method: str, endpoint_path: str, body: bytes, headers: dict[str, str], query_params: dict[str, str]):
         payload: Any = {}
         body_to_forward = body
@@ -91,7 +99,6 @@ class ProxyService:
                     "raw_body_base64": base64.b64encode(body).decode("ascii"),
                     "content_type": headers.get("content-type", ""),
                 }
-
         requested_model = payload.get("model") if isinstance(payload, dict) else None
         forwarded_model = requested_model
 
@@ -124,6 +131,8 @@ class ProxyService:
                     }
                 },
             )
+
+        payload = await self.substitute_role(payload, selected_endpoint)
 
         should_log = bool(selected_endpoint.log)
         api_key = extract_api_key(headers) if "authorization" in headers else (selected_endpoint.api_key or "unknown")

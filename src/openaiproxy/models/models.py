@@ -11,6 +11,7 @@ class EndpointConfig:
     models: list[str]
     aliases: dict[str, str]
     log: bool
+    substitute_role: dict[str, str] | None
 
 
 @dataclass(frozen=True)
