@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     )
     logs_dir: Path | None = Field(default=None, validation_alias=AliasChoices("LOGS_DIR"))
     trace_dir: Path | None = Field(default=None, validation_alias=AliasChoices("TRACE_DIR"))
+    frontend_dir: Path = Field(default=Path("./frontend"), validation_alias=AliasChoices("FRONTEND_DIR"))
 
     host: str | None = Field(default=None, validation_alias=AliasChoices("HOST", "LISTEN_HOST"))
     port: int | None = Field(default=None, validation_alias=AliasChoices("PORT", "LISTEN_PORT"))

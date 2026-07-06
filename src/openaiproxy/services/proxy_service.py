@@ -26,6 +26,21 @@ def sanitize_api_key_for_filename(api_key: str) -> str:
     return api_key.replace("/", "_").replace("\\", "_").replace(":", "_")
 
 
+_RESPONSE_FRAMING_HEADERS = {
+    "content-length",
+    "transfer-encoding",
+    "content-encoding",
+    "connection",
+    "keep-alive",
+    "trailer",
+    "upgrade",
+}
+
+
+def filter_response_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in headers.items() if k.lower() not in _RESPONSE_FRAMING_HEADERS}
+
+
 class ProxyService:
     def __init__(self, config_repository: LLMProxyConfigRepository, trace_dir: Path, logger: logging.Logger):
         self._config_repository = config_repository
@@ -34,7 +49,7 @@ class ProxyService:
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
         config = self._config_repository.load()
-        endpoints = config.endpoints
+        endpoints = [endpoint for endpoint in config.endpoints if endpoint.enabled]
         if not endpoints:
             return None
 
@@ -229,7 +244,7 @@ class ProxyService:
                     "type": "response",
                     "content": response.content,
                     "status_code": response.status_code,
-                    "headers": dict(response.headers),
+                    "headers": filter_response_headers(dict(response.headers)),
                 }
             except Exception as e:
                 response_data = {

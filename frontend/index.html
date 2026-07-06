@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Proxy — Console</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg2: #161b22; --bg3: #1c2330; --border: #2b3444;
+    --text: #e6edf3; --muted: #8b98ab; --accent: #4f9cf9; --accent2: #7c5cff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922; --purple: #bc8cff;
+    --cyan: #39c5cf; --radius: 10px; font-size: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif;
+    display: flex; height: 100vh; overflow: hidden;
+  }
+  code, .mono { font-family: 'JetBrains Mono', 'Fira Code', Menlo, monospace; }
+
+  aside { width: 220px; min-width: 220px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+  .logo { padding: 18px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+  .logo-mark { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+  .logo b { font-size: 15px; }
+  .logo small { display:block; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  nav { padding: 12px 10px; flex: 1; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; cursor: pointer; color: var(--muted); margin-bottom: 2px; font-weight: 500; transition: all .15s; }
+  .nav-item:hover { background: var(--bg3); color: var(--text); }
+  .nav-item.active { background: rgba(79,156,249,.12); color: var(--accent); }
+  .nav-item svg { width: 17px; height: 17px; flex-shrink: 0; }
+  .sidebar-footer { padding: 14px 20px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--green); margin-right:6px; box-shadow: 0 0 6px var(--green); }
+
+  main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  header { height: 56px; min-height: 56px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 14px; padding: 0 24px; background: var(--bg2); }
+  header h1 { font-size: 16px; font-weight: 600; }
+  .header-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  .pill { background: var(--bg3); border: 1px solid var(--border); padding: 5px 12px; border-radius: 20px; font-size: 12px; color: var(--muted); }
+  .pill b { color: var(--text); }
+  .content { flex: 1; overflow-y: auto; padding: 24px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
+  .kpi-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+  .kpi-value { font-size: 28px; font-weight: 700; }
+  .kpi-unit { font-size: 15px; color: var(--muted); }
+  .dash-row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .card h3 { font-size: 13px; font-weight: 600; margin-bottom: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .chart { display: flex; align-items: flex-end; gap: 4px; height: 140px; }
+  .bar { flex: 1; background: linear-gradient(180deg, var(--accent), rgba(79,156,249,.25)); border-radius: 3px 3px 0 0; min-height: 4px; position: relative; }
+  .bar.err { background: linear-gradient(180deg, var(--red), rgba(248,81,73,.25)); }
+  .bar:hover::after { content: attr(data-v); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: var(--bg3); border: 1px solid var(--border); padding: 2px 8px; border-radius: 6px; font-size: 11px; white-space: nowrap; margin-bottom: 4px; z-index: 5; }
+  .chart-x { display:flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin-top: 8px; }
+  .dist-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .dist-row .mono { width: 130px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dist-bar-wrap { flex: 1; height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; }
+  .dist-bar { height: 100%; border-radius: 4px; }
+  .dist-pct { width: 42px; text-align: right; font-size: 12px; color: var(--muted); }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 600; position: sticky; top: 0; background: var(--bg2); }
+  td { padding: 10px 12px; border-bottom: 1px solid rgba(43,52,68,.5); font-size: 13px; }
+  tbody tr { cursor: pointer; transition: background .1s; }
+  tbody tr:hover { background: var(--bg3); }
+  tbody tr.selected { background: rgba(79,156,249,.1); box-shadow: inset 3px 0 0 var(--accent); }
+  .tag { display: inline-block; padding: 2px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .tag.ok { background: rgba(63,185,80,.15); color: var(--green); }
+  .tag.err { background: rgba(248,81,73,.15); color: var(--red); }
+  .tag.warn { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .tag.stream { background: rgba(57,197,207,.15); color: var(--cyan); }
+  .tag.sync { background: rgba(139,152,171,.15); color: var(--muted); }
+  .tag.model { background: rgba(188,140,255,.12); color: var(--purple); }
+  .tag.route { background: rgba(79,156,249,.12); color: var(--accent); }
+
+  .traces-layout { display: flex; gap: 16px; height: calc(100vh - 56px - 48px - 62px); }
+  .traces-list { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .traces-list .scroll { overflow-y: auto; flex: 1; }
+  .filter-bar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  .search-input { background: var(--bg2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 12px; font-size: 13px; width: 260px; outline: none; }
+  .search-input:focus { border-color: var(--accent); }
+  select.filter { background: var(--bg2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 10px; font-size: 12px; outline: none; cursor: pointer; }
+  .btn { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 500; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.live { color: var(--green); border-color: rgba(63,185,80,.4); }
+
+  .detail { width: 46%; min-width: 480px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); display: flex; flex-direction: column; overflow: hidden; }
+  .detail-header { padding: 16px 18px; border-bottom: 1px solid var(--border); }
+  .detail-header .mono { font-size: 12px; color: var(--muted); }
+  .detail-meta { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 10px; }
+  .tab { padding: 11px 14px; cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  .msg { margin-bottom: 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .msg-head { padding: 7px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; display: flex; align-items: center; gap: 8px; }
+  .msg-body { padding: 12px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; color: #d5dce6; word-break: break-word; }
+  .msg.system .msg-head { background: rgba(210,153,34,.12); color: var(--yellow); }
+  .msg.developer .msg-head { background: rgba(210,153,34,.12); color: var(--yellow); }
+  .msg.user .msg-head { background: rgba(79,156,249,.12); color: var(--accent); }
+  .msg.assistant .msg-head { background: rgba(63,185,80,.12); color: var(--green); }
+  .msg.tool .msg-head { background: rgba(188,140,255,.12); color: var(--purple); }
+  .msg.error .msg-head { background: rgba(248,81,73,.12); color: var(--red); }
+  .subst-note { font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted); margin-left: auto; }
+  .assembled-note { background: rgba(57,197,207,.08); border: 1px dashed rgba(57,197,207,.35); color: var(--cyan); border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 12px; }
+  pre.json { background: #0a0e14; border: 1px solid var(--border); border-radius: 8px; padding: 14px; font-size: 12px; line-height: 1.6; overflow-x: auto; font-family: 'JetBrains Mono', Menlo, monospace; color: #c9d4e3; white-space: pre-wrap; word-break: break-word; }
+  .chunk-row { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid rgba(43,52,68,.4); font-size: 12px; }
+  .chunk-t { color: var(--muted); font-family: monospace; min-width: 50px; }
+  .chunk-delta { font-family: monospace; color: var(--cyan); word-break: break-all; }
+
+  .config-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; }
+  .ep-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .ep-head { padding: 14px 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+  .ep-head .name { font-weight: 700; font-size: 15px; }
+  .ep-body { padding: 16px 18px; }
+  .kv { display: flex; margin-bottom: 10px; font-size: 13px; }
+  .kv .k { width: 130px; color: var(--muted); flex-shrink: 0; }
+  .kv .v { font-family: monospace; font-size: 12px; word-break: break-all; }
+  .toggle { width: 36px; height: 20px; background: var(--green); border-radius: 10px; position: relative; cursor: pointer; flex-shrink: 0; }
+  .toggle::after { content: ''; position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; }
+  .toggle.off { background: var(--bg3); }
+  .toggle.off::after { right: auto; left: 2px; }
+  .alias-arrow { color: var(--muted); margin: 0 6px; }
+  .route-test { margin-top: 20px; }
+  .route-test-row { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+  .route-result { margin-top: 14px; padding: 12px 16px; border-radius: 8px; background: rgba(63,185,80,.08); border: 1px solid rgba(63,185,80,.3); font-size: 13px; }
+
+  .tail-line { font-family: monospace; font-size: 12px; padding: 6px 12px; border-bottom: 1px solid rgba(43,52,68,.4); display: flex; gap: 14px; align-items: baseline; cursor: pointer; }
+  .tail-line:hover { background: var(--bg3); }
+  .tail-line .t { color: var(--muted); }
+  .tail-line.new { animation: flash 1.2s ease-out; }
+  @keyframes flash { 0% { background: rgba(79,156,249,.2); } 100% { background: transparent; } }
+
+  .ep-actions { display: flex; gap: 6px; margin-left: auto; align-items: center; }
+  .icon-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); width: 28px; height: 28px; border-radius: 7px; cursor: pointer; font-size: 13px; display: grid; place-items: center; }
+  .icon-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .icon-btn.danger:hover { color: var(--red); border-color: var(--red); }
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(4,8,15,.7); z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; width: 620px; max-width: 92vw; max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .modal-head { padding: 16px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: center; }
+  .modal-head b { font-size: 15px; }
+  .modal-head .icon-btn { margin-left: auto; border: none; font-size: 16px; }
+  .modal-body { padding: 20px 22px; overflow-y: auto; }
+  .modal-foot { padding: 14px 22px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+  .field input[type=text], .field input[type=password] { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 9px 12px; font-size: 13px; outline: none; font-family: 'JetBrains Mono', monospace; }
+  .field input:focus { border-color: var(--accent); }
+  .field .hint { font-size: 11px; color: var(--muted); margin-top: 5px; }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px; }
+  .chips input { flex: 1; min-width: 90px; background: transparent; border: none; color: var(--text); outline: none; font-size: 13px; font-family: monospace; padding: 3px; }
+  .chip { background: rgba(188,140,255,.12); color: var(--purple); padding: 3px 9px; border-radius: 12px; font-size: 12px; font-family: monospace; display: flex; align-items: center; gap: 6px; }
+  .chip span { cursor: pointer; opacity: .6; } .chip span:hover { opacity: 1; }
+  .map-row { display: grid; grid-template-columns: 1fr 24px 1fr 30px; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .map-row input { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 7px 10px; font-size: 12px; font-family: monospace; outline: none; }
+  .map-row input:focus { border-color: var(--accent); }
+  .map-row .arrow { text-align: center; color: var(--muted); }
+  .add-row-btn { background: none; border: 1px dashed var(--border); color: var(--muted); border-radius: 7px; padding: 6px; width: 100%; cursor: pointer; font-size: 12px; }
+  .add-row-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .switch-field { display: flex; align-items: center; gap: 12px; }
+  .toast { position: fixed; bottom: 20px; right: 14px; background: var(--green); color: #04260d; padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; opacity: 0; transform: translateY(10px); transition: all .3s; z-index: 200; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.error { background: var(--red); color: #fff; }
+
+  .empty { color: var(--muted); text-align: center; padding: 60px 20px; font-size: 13px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="logo">
+    <div class="logo-mark">≋</div>
+    <div><b>LLM Proxy</b><small>Console</small></div>
+  </div>
+  <nav>
+    <div class="nav-item active" data-view="dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+      Dashboard
+    </div>
+    <div class="nav-item" data-view="traces">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 21l-4.35-4.35"/><circle cx="11" cy="11" r="7"/></svg>
+      Traces
+    </div>
+    <div class="nav-item" data-view="live">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Live Tail
+    </div>
+    <div class="nav-item" data-view="config">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Configuration
+    </div>
+  </nav>
+  <div class="sidebar-footer">
+    <div><span class="status-dot"></span>Proxy running</div>
+    <div class="mono" id="footer-info"></div>
+  </div>
+</aside>
+
+<main>
+  <header>
+    <h1 id="view-title">Dashboard</h1>
+    <div class="header-right">
+      <span class="pill">Trace dir <b class="mono" id="hdr-trace-dir">…</b></span>
+      <button class="btn" id="refresh-btn">⟳ Refresh</button>
+    </div>
+  </header>
+
+  <div class="content">
+
+    <!-- DASHBOARD -->
+    <section class="view active" id="view-dashboard">
+      <div class="kpi-grid">
+        <div class="card"><div class="kpi-label">Requests (24h)</div><div class="kpi-value" id="kpi-total">–</div></div>
+        <div class="card"><div class="kpi-label">Error rate</div><div class="kpi-value" id="kpi-errors">–</div></div>
+        <div class="card"><div class="kpi-label">Avg duration</div><div class="kpi-value" id="kpi-latency">–</div></div>
+        <div class="card"><div class="kpi-label">Streaming share</div><div class="kpi-value" id="kpi-stream">–</div></div>
+      </div>
+      <div class="dash-row">
+        <div class="card">
+          <h3>Traffic — requests per hour</h3>
+          <div class="chart" id="traffic-chart"></div>
+          <div class="chart-x"><span>-24h</span><span>-18h</span><span>-12h</span><span>-6h</span><span>now</span></div>
+        </div>
+        <div class="card">
+          <h3>Requests by model</h3>
+          <div id="model-dist"></div>
+          <h3 style="margin-top:22px">Requests by API key</h3>
+          <div id="key-dist"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Recent activity</h3>
+        <table>
+          <thead><tr><th>Time</th><th>Model</th><th>Endpoint</th><th>Type</th><th>Status</th><th>Msgs</th><th>Duration</th></tr></thead>
+          <tbody id="recent-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TRACES -->
+    <section class="view" id="view-traces">
+      <div class="filter-bar">
+        <input class="search-input" placeholder="⌕ Search trace id, model, endpoint…" id="trace-search">
+        <select class="filter" id="f-model"><option value="">All models</option></select>
+        <select class="filter" id="f-apikey"><option value="">All API keys</option></select>
+        <select class="filter" id="f-status">
+          <option value="">Any status</option>
+          <option value="2">2xx</option>
+          <option value="4">4xx</option>
+          <option value="5">5xx</option>
+          <option value="error">Errors</option>
+        </select>
+        <button class="btn" id="trace-refresh">⟳</button>
+      </div>
+      <div class="traces-layout">
+        <div class="traces-list">
+          <div class="scroll">
+            <table>
+              <thead><tr><th>Time</th><th>Model</th><th>Type</th><th>Status</th><th>Msgs</th><th>Dur.</th></tr></thead>
+              <tbody id="traces-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="detail">
+          <div class="detail-header">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <b id="d-title">Select a trace</b>
+              <span class="mono" id="d-file"></span>
+            </div>
+            <div class="detail-meta" id="d-meta"></div>
+          </div>
+          <div class="tabs" id="d-tabs">
+            <div class="tab active" data-tab="conv">Conversation</div>
+            <div class="tab" data-tab="req">Request JSON</div>
+            <div class="tab" data-tab="resp">Response</div>
+            <div class="tab" data-tab="chunks">SSE Chunks</div>
+            <div class="tab" data-tab="headers">Headers</div>
+          </div>
+          <div class="tab-body">
+            <div class="tab-pane active" id="pane-conv"><div class="empty">Select a trace from the list to inspect it.</div></div>
+            <div class="tab-pane" id="pane-req"></div>
+            <div class="tab-pane" id="pane-resp"></div>
+            <div class="tab-pane" id="pane-chunks"></div>
+            <div class="tab-pane" id="pane-headers"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LIVE TAIL -->
+    <section class="view" id="view-live">
+      <div class="filter-bar">
+        <button class="btn live" id="tail-toggle">● Following</button>
+        <span class="muted" style="font-size:12px" id="tail-count"></span>
+      </div>
+      <div class="card" style="padding:0; max-height: calc(100vh - 200px); overflow-y:auto" id="tail-box"></div>
+    </section>
+
+    <!-- CONFIG -->
+    <section class="view" id="view-config">
+      <div class="filter-bar">
+        <span class="pill">Listen <b class="mono" id="cfg-listen">…</b></span>
+        <span class="pill">Logs <b class="mono" id="cfg-logs">…</b></span>
+        <span class="pill">Traces <b class="mono" id="cfg-traces">…</b></span>
+        <button class="btn primary" style="margin-left:auto" id="add-ep-btn">＋ Add endpoint</button>
+        <button class="btn" id="cfg-reload-btn">⟳ Reload</button>
+      </div>
+      <div class="config-grid" id="config-grid"></div>
+      <div class="card route-test">
+        <h3>Routing tester — which endpoint handles a model?</h3>
+        <div class="route-test-row">
+          <input class="search-input" id="route-input" placeholder="Model name, e.g. gpt-5.1">
+          <button class="btn primary" id="route-btn">Resolve route</button>
+        </div>
+        <div class="route-result" id="route-result" style="display:none"></div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- ENDPOINT EDITOR MODAL -->
+<div class="modal-overlay" id="ep-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <b id="modal-title">Edit endpoint</b>
+      <button class="icon-btn" id="modal-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field-row">
+        <div class="field">
+          <label>Endpoint name</label>
+          <input type="text" id="fe-name" placeholder="e.g. openai">
+        </div>
+        <div class="field">
+          <label>Enabled</label>
+          <div class="switch-field" style="padding-top:6px">
+            <div class="toggle" id="fe-enabled"></div>
+            <span class="muted" style="font-size:13px">Include in routing</span>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Base URL</label>
+        <input type="text" id="fe-url" placeholder="https://api.example.com/v1">
+      </div>
+      <div class="field">
+        <label>API key</label>
+        <input type="password" id="fe-key" placeholder="">
+        <div class="hint" id="fe-key-hint">Leave empty to keep the current key.</div>
+      </div>
+      <div class="field">
+        <label>Models (Enter to add · use * for wildcard fallback)</label>
+        <div class="chips" id="fe-models">
+          <input type="text" id="fe-models-input" placeholder="add model…">
+        </div>
+      </div>
+      <div class="field">
+        <label>Model aliases (requested → forwarded)</label>
+        <div id="fe-aliases"></div>
+        <button class="add-row-btn" data-target="fe-aliases">＋ Add alias</button>
+      </div>
+      <div class="field">
+        <label>Role substitutions (incoming role → replacement)</label>
+        <div id="fe-roles"></div>
+        <button class="add-row-btn" data-target="fe-roles">＋ Add substitution</button>
+      </div>
+      <div class="field">
+        <label>Trace logging</label>
+        <div class="switch-field">
+          <div class="toggle" id="fe-log"></div>
+          <span class="muted" style="font-size:13px">Write request/response JSON pairs to trace_dir</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="modal-cancel">Cancel</button>
+      <button class="btn primary" id="modal-apply">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

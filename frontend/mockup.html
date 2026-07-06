@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Proxy — Console (Mockup)</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #1c2330;
+    --border: #2b3444;
+    --text: #e6edf3;
+    --muted: #8b98ab;
+    --accent: #4f9cf9;
+    --accent2: #7c5cff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --purple: #bc8cff;
+    --cyan: #39c5cf;
+    --radius: 10px;
+    font-size: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+  code, .mono { font-family: 'JetBrains Mono', 'Fira Code', Menlo, monospace; }
+
+  /* ── Sidebar ─────────────────────────── */
+  aside {
+    width: 220px; min-width: 220px;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+  }
+  .logo {
+    padding: 18px 20px;
+    display: flex; align-items: center; gap: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo-mark {
+    width: 30px; height: 30px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: grid; place-items: center; font-weight: 700; font-size: 14px;
+  }
+  .logo b { font-size: 15px; }
+  .logo small { display:block; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  nav { padding: 12px 10px; flex: 1; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px; border-radius: 8px; cursor: pointer;
+    color: var(--muted); margin-bottom: 2px; font-weight: 500;
+    transition: all .15s;
+  }
+  .nav-item:hover { background: var(--bg3); color: var(--text); }
+  .nav-item.active { background: rgba(79,156,249,.12); color: var(--accent); }
+  .nav-item svg { width: 17px; height: 17px; flex-shrink: 0; }
+  .nav-badge {
+    margin-left: auto; background: var(--red); color: #fff;
+    font-size: 10px; padding: 1px 7px; border-radius: 10px; font-weight: 600;
+  }
+  .sidebar-footer {
+    padding: 14px 20px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--muted);
+  }
+  .status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background: var(--green); margin-right:6px; box-shadow: 0 0 6px var(--green); }
+
+  /* ── Main ────────────────────────────── */
+  main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  header {
+    height: 56px; min-height: 56px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 24px; background: var(--bg2);
+  }
+  header h1 { font-size: 16px; font-weight: 600; }
+  .header-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  .pill {
+    background: var(--bg3); border: 1px solid var(--border);
+    padding: 5px 12px; border-radius: 20px; font-size: 12px; color: var(--muted);
+  }
+  .pill b { color: var(--text); }
+  .content { flex: 1; overflow-y: auto; padding: 24px; }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* ── Dashboard ───────────────────────── */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+  .card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px;
+  }
+  .kpi-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+  .kpi-value { font-size: 28px; font-weight: 700; }
+  .kpi-delta { font-size: 12px; margin-top: 6px; }
+  .up { color: var(--green); } .down { color: var(--red); }
+  .dash-row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .card h3 { font-size: 13px; font-weight: 600; margin-bottom: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .chart { display: flex; align-items: flex-end; gap: 4px; height: 140px; }
+  .bar { flex: 1; background: linear-gradient(180deg, var(--accent), rgba(79,156,249,.25)); border-radius: 3px 3px 0 0; min-height: 4px; position: relative; }
+  .bar.err { background: linear-gradient(180deg, var(--red), rgba(248,81,73,.25)); }
+  .bar:hover::after {
+    content: attr(data-v); position: absolute; bottom: 100%; left: 50%;
+    transform: translateX(-50%); background: var(--bg3); border: 1px solid var(--border);
+    padding: 2px 8px; border-radius: 6px; font-size: 11px; white-space: nowrap; margin-bottom: 4px;
+  }
+  .chart-x { display:flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin-top: 8px; }
+  .dist-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .dist-row .mono { width: 130px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dist-bar-wrap { flex: 1; height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; }
+  .dist-bar { height: 100%; border-radius: 4px; }
+  .dist-pct { width: 42px; text-align: right; font-size: 12px; color: var(--muted); }
+
+  /* ── Tables ──────────────────────────── */
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .06em; padding: 10px 12px; border-bottom: 1px solid var(--border);
+    font-weight: 600; position: sticky; top: 0; background: var(--bg2);
+  }
+  td { padding: 10px 12px; border-bottom: 1px solid rgba(43,52,68,.5); font-size: 13px; }
+  tbody tr { cursor: pointer; transition: background .1s; }
+  tbody tr:hover { background: var(--bg3); }
+  tbody tr.selected { background: rgba(79,156,249,.1); box-shadow: inset 3px 0 0 var(--accent); }
+  .tag {
+    display: inline-block; padding: 2px 9px; border-radius: 12px;
+    font-size: 11px; font-weight: 600;
+  }
+  .tag.ok { background: rgba(63,185,80,.15); color: var(--green); }
+  .tag.err { background: rgba(248,81,73,.15); color: var(--red); }
+  .tag.warn { background: rgba(210,153,34,.15); color: var(--yellow); }
+  .tag.stream { background: rgba(57,197,207,.15); color: var(--cyan); }
+  .tag.sync { background: rgba(139,152,171,.15); color: var(--muted); }
+  .tag.model { background: rgba(188,140,255,.12); color: var(--purple); }
+  .tag.route { background: rgba(79,156,249,.12); color: var(--accent); }
+
+  /* ── Traces layout ───────────────────── */
+  .traces-layout { display: flex; gap: 16px; height: calc(100vh - 56px - 48px - 62px); }
+  .traces-list { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .traces-list .scroll { overflow-y: auto; flex: 1; }
+  .filter-bar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  .search-input {
+    background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 8px 12px; font-size: 13px; width: 260px; outline: none;
+  }
+  .search-input:focus { border-color: var(--accent); }
+  select.filter {
+    background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 8px 10px; font-size: 12px; outline: none; cursor: pointer;
+  }
+  .btn {
+    background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 500;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.live { color: var(--green); border-color: rgba(63,185,80,.4); }
+
+  /* ── Detail panel ────────────────────── */
+  .detail { width: 46%; min-width: 480px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); display: flex; flex-direction: column; overflow: hidden; }
+  .detail-header { padding: 16px 18px; border-bottom: 1px solid var(--border); }
+  .detail-header .mono { font-size: 12px; color: var(--muted); }
+  .detail-meta { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 10px; }
+  .tab { padding: 11px 14px; cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 500; border-bottom: 2px solid transparent; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* conversation rendering */
+  .msg { margin-bottom: 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .msg-head { padding: 7px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; display: flex; align-items: center; gap: 8px; }
+  .msg-body { padding: 12px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; color: #d5dce6; }
+  .msg.system .msg-head { background: rgba(210,153,34,.12); color: var(--yellow); }
+  .msg.user .msg-head { background: rgba(79,156,249,.12); color: var(--accent); }
+  .msg.assistant .msg-head { background: rgba(63,185,80,.12); color: var(--green); }
+  .msg.tool .msg-head { background: rgba(188,140,255,.12); color: var(--purple); }
+  .subst-note { font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted); margin-left: auto; }
+  .assembled-note {
+    background: rgba(57,197,207,.08); border: 1px dashed rgba(57,197,207,.35);
+    color: var(--cyan); border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 12px;
+  }
+  pre.json {
+    background: #0a0e14; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px; font-size: 12px; line-height: 1.6; overflow-x: auto;
+    font-family: 'JetBrains Mono', Menlo, monospace; color: #c9d4e3;
+  }
+  .j-key { color: var(--accent); } .j-str { color: #a5d6a7; } .j-num { color: #f0a45d; } .j-bool { color: var(--purple); }
+  .chunk-row { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid rgba(43,52,68,.4); font-size: 12px; }
+  .chunk-t { color: var(--muted); font-family: monospace; min-width: 70px; }
+  .chunk-delta { font-family: monospace; color: var(--cyan); }
+
+  /* ── Config view ─────────────────────── */
+  .config-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; }
+  .ep-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .ep-head { padding: 14px 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
+  .ep-head .name { font-weight: 700; font-size: 15px; }
+  .ep-body { padding: 16px 18px; }
+  .kv { display: flex; margin-bottom: 10px; font-size: 13px; }
+  .kv .k { width: 130px; color: var(--muted); flex-shrink: 0; }
+  .kv .v { font-family: monospace; font-size: 12px; word-break: break-all; }
+  .toggle { margin-left: auto; width: 36px; height: 20px; background: var(--green); border-radius: 10px; position: relative; cursor: pointer; }
+  .toggle::after { content: ''; position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; }
+  .toggle.off { background: var(--bg3); }
+  .toggle.off::after { right: auto; left: 2px; }
+  .alias-arrow { color: var(--muted); margin: 0 6px; }
+  .route-test { margin-top: 20px; }
+  .route-test-row { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+  .route-result {
+    margin-top: 14px; padding: 12px 16px; border-radius: 8px;
+    background: rgba(63,185,80,.08); border: 1px solid rgba(63,185,80,.3); font-size: 13px;
+  }
+
+  /* live tail */
+  .tail-line { font-family: monospace; font-size: 12px; padding: 6px 12px; border-bottom: 1px solid rgba(43,52,68,.4); display: flex; gap: 14px; align-items: baseline; }
+  .tail-line .t { color: var(--muted); }
+  .tail-line.new { animation: flash 1.2s ease-out; }
+  @keyframes flash { 0% { background: rgba(79,156,249,.2); } 100% { background: transparent; } }
+
+  /* ── Config editing ────────────────── */
+  .ep-actions { display: flex; gap: 6px; margin-left: auto; align-items: center; }
+  .icon-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--muted);
+    width: 28px; height: 28px; border-radius: 7px; cursor: pointer; font-size: 13px;
+    display: grid; place-items: center;
+  }
+  .icon-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .icon-btn.danger:hover { color: var(--red); border-color: var(--red); }
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(4,8,15,.7);
+    z-index: 100; align-items: center; justify-content: center; backdrop-filter: blur(2px);
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
+    width: 620px; max-width: 92vw; max-height: 88vh; display: flex; flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  .modal-head { padding: 16px 22px; border-bottom: 1px solid var(--border); display: flex; align-items: center; }
+  .modal-head b { font-size: 15px; }
+  .modal-head .icon-btn { margin-left: auto; border: none; font-size: 16px; }
+  .modal-body { padding: 20px 22px; overflow-y: auto; }
+  .modal-foot { padding: 14px 22px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+  .field input[type=text], .field input[type=password] {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 9px 12px; font-size: 13px; outline: none; font-family: 'JetBrains Mono', monospace;
+  }
+  .field input:focus { border-color: var(--accent); }
+  .field .hint { font-size: 11px; color: var(--muted); margin-top: 5px; }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px; }
+  .chips input { flex: 1; min-width: 90px; background: transparent; border: none; color: var(--text); outline: none; font-size: 13px; font-family: monospace; padding: 3px; }
+  .chip { background: rgba(188,140,255,.12); color: var(--purple); padding: 3px 9px; border-radius: 12px; font-size: 12px; font-family: monospace; display: flex; align-items: center; gap: 6px; }
+  .chip span { cursor: pointer; opacity: .6; } .chip span:hover { opacity: 1; }
+  .map-row { display: grid; grid-template-columns: 1fr 24px 1fr 30px; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .map-row input { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 7px 10px; font-size: 12px; font-family: monospace; outline: none; }
+  .map-row input:focus { border-color: var(--accent); }
+  .map-row .arrow { text-align: center; color: var(--muted); }
+  .add-row-btn { background: none; border: 1px dashed var(--border); color: var(--muted); border-radius: 7px; padding: 6px; width: 100%; cursor: pointer; font-size: 12px; }
+  .add-row-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .switch-field { display: flex; align-items: center; gap: 12px; }
+  .switch-field .lbl { font-size: 13px; }
+  .unsaved-bar {
+    display: none; align-items: center; gap: 14px; background: rgba(210,153,34,.1);
+    border: 1px solid rgba(210,153,34,.4); border-radius: var(--radius);
+    padding: 10px 16px; margin-bottom: 16px; font-size: 13px;
+  }
+  .unsaved-bar.show { display: flex; }
+  .unsaved-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); }
+  .yaml-card { margin-top: 20px; }
+  pre.yaml {
+    background: #0a0e14; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px; font-size: 12px; line-height: 1.6; overflow-x: auto;
+    font-family: 'JetBrains Mono', Menlo, monospace; color: #c9d4e3; white-space: pre;
+  }
+  .y-key { color: var(--accent); } .y-str { color: #a5d6a7; } .y-comment { color: var(--muted); font-style: italic; }
+  .toast {
+    position: fixed; bottom: 50px; right: 14px; background: var(--green); color: #04260d;
+    padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    opacity: 0; transform: translateY(10px); transition: all .3s; z-index: 200; pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  .empty { color: var(--muted); text-align: center; padding: 60px 20px; font-size: 13px; }
+  .muted { color: var(--muted); }
+  .mock-banner {
+    position: fixed; bottom: 14px; right: 14px; background: var(--accent2);
+    color: #fff; padding: 6px 14px; border-radius: 20px; font-size: 11px;
+    font-weight: 600; opacity: .85; z-index: 99;
+  }
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="logo">
+    <div class="logo-mark">≋</div>
+    <div><b>LLM Proxy</b><small>Console</small></div>
+  </div>
+  <nav>
+    <div class="nav-item active" data-view="dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+      Dashboard
+    </div>
+    <div class="nav-item" data-view="traces">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 21l-4.35-4.35"/><circle cx="11" cy="11" r="7"/></svg>
+      Traces
+    </div>
+    <div class="nav-item" data-view="live">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Live Tail
+      <span class="nav-badge" id="live-badge">3</span>
+    </div>
+    <div class="nav-item" data-view="config">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Configuration
+    </div>
+  </nav>
+  <div class="sidebar-footer">
+    <div><span class="status-dot"></span>Proxy running</div>
+    <div class="mono" style="margin-top:6px">0.0.0.0:8000 · v0.1.0</div>
+  </div>
+</aside>
+
+<main>
+  <header>
+    <h1 id="view-title">Dashboard</h1>
+    <div class="header-right">
+      <span class="pill">Uptime <b>2d 14h</b></span>
+      <span class="pill">Trace dir <b class="mono">./traces</b></span>
+      <button class="btn">⟳ Refresh</button>
+    </div>
+  </header>
+
+  <div class="content">
+
+    <!-- ═══════════ DASHBOARD ═══════════ -->
+    <section class="view active" id="view-dashboard">
+      <div class="kpi-grid">
+        <div class="card">
+          <div class="kpi-label">Requests (24h)</div>
+          <div class="kpi-value">1,847</div>
+          <div class="kpi-delta up">▲ 12.4% vs yesterday</div>
+        </div>
+        <div class="card">
+          <div class="kpi-label">Error rate</div>
+          <div class="kpi-value">1.9%</div>
+          <div class="kpi-delta down">▲ 0.6% — 35 failed</div>
+        </div>
+        <div class="card">
+          <div class="kpi-label">Avg latency (TTFB)</div>
+          <div class="kpi-value">342<span style="font-size:15px;color:var(--muted)"> ms</span></div>
+          <div class="kpi-delta up">▼ 28ms vs yesterday</div>
+        </div>
+        <div class="card">
+          <div class="kpi-label">Tokens streamed (24h)</div>
+          <div class="kpi-value">4.2<span style="font-size:15px;color:var(--muted)"> M</span></div>
+          <div class="kpi-delta up">▲ 8.1%</div>
+        </div>
+      </div>
+
+      <div class="dash-row">
+        <div class="card">
+          <h3>Traffic — requests per hour</h3>
+          <div class="chart" id="traffic-chart"></div>
+          <div class="chart-x"><span>-24h</span><span>-18h</span><span>-12h</span><span>-6h</span><span>now</span></div>
+        </div>
+        <div class="card">
+          <h3>Requests by model</h3>
+          <div id="model-dist"></div>
+          <h3 style="margin-top:22px">Routed to endpoint</h3>
+          <div id="ep-dist"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Recent activity</h3>
+        <table>
+          <thead><tr><th>Time</th><th>Model</th><th>Endpoint</th><th>Route</th><th>Type</th><th>Status</th><th>Duration</th></tr></thead>
+          <tbody id="recent-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ═══════════ TRACES ═══════════ -->
+    <section class="view" id="view-traces">
+      <div class="filter-bar">
+        <input class="search-input" placeholder="⌕ Search message content, model, trace ID…" id="trace-search">
+        <select class="filter"><option>All models</option><option>qwen-3.5-122b</option><option>gpt-5.1</option><option>gpt-oss-120b</option></select>
+        <select class="filter"><option>All endpoints</option><option>default</option><option>openai</option></select>
+        <select class="filter"><option>All API keys</option><option>sk-1244</option><option>sk-9xk2</option></select>
+        <select class="filter"><option>Any status</option><option>2xx</option><option>4xx</option><option>5xx / error</option></select>
+        <select class="filter"><option>Last 24h</option><option>Last hour</option><option>Last 7 days</option><option>Custom…</option></select>
+        <button class="btn" style="margin-left:auto">⬇ Export JSON</button>
+      </div>
+      <div class="traces-layout">
+        <div class="traces-list">
+          <div class="scroll">
+            <table>
+              <thead><tr><th>Time</th><th>Model → Forwarded</th><th>Route</th><th>Type</th><th>Status</th><th>Msgs</th><th>Dur.</th></tr></thead>
+              <tbody id="traces-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="detail" id="trace-detail">
+          <div class="detail-header">
+            <div style="display:flex;align-items:center;gap:10px">
+              <b id="d-title">Select a trace</b>
+              <span class="mono" id="d-file"></span>
+            </div>
+            <div class="detail-meta" id="d-meta"></div>
+          </div>
+          <div class="tabs" id="d-tabs">
+            <div class="tab active" data-tab="conv">Conversation</div>
+            <div class="tab" data-tab="req">Request JSON</div>
+            <div class="tab" data-tab="resp">Response</div>
+            <div class="tab" data-tab="chunks">SSE Chunks</div>
+            <div class="tab" data-tab="headers">Headers</div>
+          </div>
+          <div class="tab-body">
+            <div class="tab-pane active" id="pane-conv"><div class="empty">Select a trace from the list to inspect it.</div></div>
+            <div class="tab-pane" id="pane-req"></div>
+            <div class="tab-pane" id="pane-resp"></div>
+            <div class="tab-pane" id="pane-chunks"></div>
+            <div class="tab-pane" id="pane-headers"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ LIVE TAIL ═══════════ -->
+    <section class="view" id="view-live">
+      <div class="filter-bar">
+        <button class="btn live" id="tail-toggle">● Following</button>
+        <select class="filter"><option>All endpoints</option><option>default</option><option>openai</option></select>
+        <span class="muted" style="font-size:12px" id="tail-count"></span>
+      </div>
+      <div class="card" style="padding:0; max-height: calc(100vh - 200px); overflow-y:auto" id="tail-box"></div>
+    </section>
+
+    <!-- ═══════════ CONFIG ═══════════ -->
+    <section class="view" id="view-config">
+      <div class="filter-bar">
+        <span class="pill">Source <b class="mono">llmproxy.yaml</b></span>
+        <span class="pill">Listen <b class="mono">0.0.0.0:8000</b></span>
+        <span class="pill">Logs <b class="mono">./logs</b></span>
+        <span class="pill">Traces <b class="mono">./traces</b></span>
+        <button class="btn primary" style="margin-left:auto" onclick="openEditor(null)">＋ Add endpoint</button>
+        <button class="btn" onclick="reloadConfig()">⟳ Reload config</button>
+      </div>
+      <div class="unsaved-bar" id="unsaved-bar">
+        <span class="dot"></span>
+        <span>You have unsaved configuration changes.</span>
+        <button class="btn primary" style="margin-left:auto" onclick="saveConfig()">💾 Save to llmproxy.yaml</button>
+        <button class="btn" onclick="reloadConfig()">Discard</button>
+      </div>
+      <div class="config-grid" id="config-grid"></div>
+
+      <div class="card yaml-card">
+        <h3>Generated llmproxy.yaml preview</h3>
+        <pre class="yaml" id="yaml-preview"></pre>
+      </div>
+
+      <div class="card route-test">
+        <h3>Routing tester — which endpoint handles a model?</h3>
+        <div class="route-test-row">
+          <input class="search-input" id="route-input" placeholder="Model name, e.g. gpt-5.1" value="gpt-5.1">
+          <button class="btn primary" id="route-btn">Resolve route</button>
+        </div>
+        <div class="route-result" id="route-result">
+          <b>gpt-5.1</b> → endpoint <span class="tag route">openai</span> · forwarded as <code>gpt-5.1</code> (no alias) · target <code class="mono">http://wingman.akhbar.lan:8000/v1</code> · tracing <span class="tag ok">on</span>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- ═══════════ ENDPOINT EDITOR MODAL ═══════════ -->
+<div class="modal-overlay" id="ep-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <b id="modal-title">Edit endpoint</b>
+      <button class="icon-btn" onclick="closeEditor()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field-row">
+        <div class="field">
+          <label>Endpoint name</label>
+          <input type="text" id="f-name" placeholder="e.g. openai">
+        </div>
+        <div class="field">
+          <label>Enabled</label>
+          <div class="switch-field" style="padding-top:6px">
+            <div class="toggle" id="f-enabled" onclick="this.classList.toggle('off')"></div>
+            <span class="lbl muted">Include in routing</span>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Base URL</label>
+        <input type="text" id="f-url" placeholder="https://api.example.com/v1">
+      </div>
+      <div class="field">
+        <label>API key</label>
+        <input type="password" id="f-key" placeholder="sk-…">
+        <div class="hint">Stored in llmproxy.yaml — masked in the UI. Leave empty to forward the client's Authorization header.</div>
+      </div>
+      <div class="field">
+        <label>Models (Enter to add · use * for wildcard fallback)</label>
+        <div class="chips" id="f-models" onclick="this.querySelector('input').focus()">
+          <input type="text" id="f-models-input" placeholder="add model…">
+        </div>
+      </div>
+      <div class="field">
+        <label>Model aliases (requested → forwarded)</label>
+        <div id="f-aliases"></div>
+        <button class="add-row-btn" onclick="addMapRow('f-aliases')">＋ Add alias</button>
+      </div>
+      <div class="field">
+        <label>Role substitutions (incoming role → replacement)</label>
+        <div id="f-roles"></div>
+        <button class="add-row-btn" onclick="addMapRow('f-roles')">＋ Add substitution</button>
+      </div>
+      <div class="field">
+        <label>Trace logging</label>
+        <div class="switch-field">
+          <div class="toggle" id="f-log" onclick="this.classList.toggle('off')"></div>
+          <span class="lbl muted">Write request/response JSON pairs to trace_dir</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeEditor()">Cancel</button>
+      <button class="btn primary" onclick="applyEditor()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="mock-banner">UI MOCKUP — static demo data</div>
+
+<script>
+/* ═════════ Mock data ═════════ */
+const TRACES = [
+  {
+    id: "sk-1244_20260706_112029_888578", time: "11:20:29.888", model: "qwen-3.5-122b", fwd: "qwen-3.5-122b",
+    route: "default", type: "stream", status: 200, dur: "3.4s", msgs: 3, apiKey: "sk-1244",
+    endpoint: "/chat/completions",
+    messages: [
+      { role: "system", content: "You are the fast-loop reviewer, analyzing recent conversation turns to extract episodic memories. Your job is to review ONLY the new turns since the last review…" },
+      { role: "user", content: "Review the following transcript slice and update the episode file.\n\n<transcript>…245 KB payload truncated for mockup…</transcript>" },
+      { role: "assistant", assembled: true, content: "I've reviewed the new turns since the watermark. Key updates to the episode:\n\n**Task & outcome** — The user refactored the proxy service to support streaming…" },
+    ],
+    chunks: [
+      ["+0ms",    'delta: {role:"assistant"}'],
+      ["+18ms",   'delta: "I"'],
+      ["+31ms",   'delta: "\'ve"'],
+      ["+45ms",   'delta: " reviewed"'],
+      ["+59ms",   'delta: " the"'],
+      ["+74ms",   'delta: " new"'],
+      ["+88ms",   'delta: " turns"'],
+      ["+3.4s",   'finish_reason: "stop" · 412 chunks total'],
+    ],
+    reqHeaders: { host: "wingman.akhbar.lan:9090", "user-agent": "r1/JS 6.45.0", authorization: "Bearer sk-1••••", "content-type": "application/json", "content-length": "245374" },
+    respHeaders: { "content-type": "text/event-stream", server: "llama.cpp", "transfer-encoding": "chunked" },
+  },
+  {
+    id: "sk-1244_20260706_112010_156945", time: "11:20:10.156", model: "gpt-5.1", fwd: "gpt-5.1",
+    route: "openai", type: "sync", status: 200, dur: "812ms", msgs: 2, apiKey: "sk-1244",
+    endpoint: "/chat/completions",
+    messages: [
+      { role: "system", content: "You are a helpful assistant. Answer concisely.", substituted: "developer → system" },
+      { role: "user", content: "Summarize the routing log for the last hour." },
+      { role: "assistant", content: "In the last hour the proxy handled 214 requests: 89% routed to `default`, 11% to `openai`. Two requests failed with connection timeouts." },
+    ],
+    chunks: [],
+    reqHeaders: { host: "wingman.akhbar.lan:9090", authorization: "Bearer sk-1••••", "content-type": "application/json" },
+    respHeaders: { "content-type": "application/json", server: "llama.cpp" },
+  },
+  {
+    id: "sk-9xk2_20260706_111941_536658", time: "11:19:41.536", model: "gpt-5.2", fwd: "gpt-5.1",
+    route: "localai2", type: "stream", status: 200, dur: "5.1s", msgs: 4, apiKey: "sk-9xk2",
+    endpoint: "/chat/completions", aliased: true,
+    messages: [
+      { role: "system", content: "You are a coding agent working in a Python repository." },
+      { role: "user", content: "Add a retry decorator to the httpx client calls." },
+      { role: "tool", content: '{"name": "read_file", "result": "proxy_service.py — 248 lines"}' },
+      { role: "assistant", assembled: true, content: "I'll add a `tenacity`-based retry wrapper around the httpx calls in `ProxyService.proxy`…" },
+    ],
+    chunks: [ ["+0ms", 'delta: {role:"assistant"}'], ["+22ms", 'delta: "I"'], ["+5.1s", 'finish_reason: "stop" · 380 chunks'] ],
+    reqHeaders: { authorization: "Bearer sk-9••••", "content-type": "application/json" },
+    respHeaders: { "content-type": "text/event-stream" },
+  },
+  {
+    id: "sk-1244_20260706_111832_127166", time: "11:18:32.127", model: "claude-4.6", fwd: "—",
+    route: null, type: "sync", status: 404, dur: "2ms", msgs: 1, apiKey: "sk-1244",
+    endpoint: "/chat/completions",
+    messages: [ { role: "user", content: "Hello?" } ],
+    chunks: [],
+    error: { message: "No route configured for requested model", type: "routing_error", model: "claude-4.6" },
+    reqHeaders: { authorization: "Bearer sk-1••••", "content-type": "application/json" },
+    respHeaders: { "content-type": "application/json" },
+  },
+  {
+    id: "sk-1244_20260706_111705_540798", time: "11:17:05.540", model: "qwen-3.5-122b", fwd: "qwen-3.5-122b",
+    route: "default", type: "stream", status: 500, dur: "30.0s", msgs: 2, apiKey: "sk-1244",
+    endpoint: "/chat/completions",
+    messages: [
+      { role: "system", content: "You are a helpful assistant." },
+      { role: "user", content: "Generate a 5000 word essay on distributed systems." },
+    ],
+    chunks: [ ["+0ms", "connect…"], ["+30s", 'error: "ReadTimeout: timed out"'] ],
+    error: { message: "ReadTimeout: timed out" },
+    reqHeaders: { authorization: "Bearer sk-1••••", "content-type": "application/json" },
+    respHeaders: {},
+  },
+];
+
+/* ═════════ Nav ═════════ */
+const titles = { dashboard: "Dashboard", traces: "Traces", live: "Live Tail", config: "Configuration" };
+document.querySelectorAll(".nav-item").forEach(item => {
+  item.onclick = () => {
+    document.querySelectorAll(".nav-item").forEach(i => i.classList.remove("active"));
+    document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+    item.classList.add("active");
+    const v = item.dataset.view;
+    document.getElementById("view-" + v).classList.add("active");
+    document.getElementById("view-title").textContent = titles[v];
+    if (v === "live") document.getElementById("live-badge").style.display = "none";
+  };
+});
+
+/* ═════════ Dashboard ═════════ */
+const chart = document.getElementById("traffic-chart");
+const hours = [42,38,31,25,19,14,12,16,28,55,86,110,124,131,118,126,140,133,121,98,87,74,66,58];
+hours.forEach((v,i) => {
+  const b = document.createElement("div");
+  b.className = "bar" + (i === 13 ? " err" : "");
+  b.style.height = (v / 140 * 100) + "%";
+  b.dataset.v = v + " req" + (i === 13 ? " · 9 errors" : "");
+  chart.appendChild(b);
+});
+
+function dist(el, rows, color) {
+  document.getElementById(el).innerHTML = rows.map(([name, pct]) => `
+    <div class="dist-row">
+      <span class="mono">${name}</span>
+      <div class="dist-bar-wrap"><div class="dist-bar" style="width:${pct}%;background:${color}"></div></div>
+      <span class="dist-pct">${pct}%</span>
+    </div>`).join("");
+}
+dist("model-dist", [["qwen-3.5-122b", 61], ["gpt-5.1", 24], ["gpt-5.2", 9], ["other", 6]], "var(--purple)");
+dist("ep-dist", [["default", 67], ["openai", 24], ["localai2", 9]], "var(--accent)");
+
+document.getElementById("recent-tbody").innerHTML = TRACES.map(t => `
+  <tr onclick="openTrace('${t.id}')">
+    <td class="mono muted">${t.time}</td>
+    <td><span class="tag model">${t.model}</span>${t.aliased ? ' <span class="alias-arrow">→</span> <span class="tag model">' + t.fwd + "</span>" : ""}</td>
+    <td class="mono muted">${t.endpoint}</td>
+    <td>${t.route ? '<span class="tag route">' + t.route + "</span>" : '<span class="tag err">no route</span>'}</td>
+    <td><span class="tag ${t.type}">${t.type}</span></td>
+    <td><span class="tag ${t.status < 400 ? "ok" : "err"}">${t.status}</span></td>
+    <td class="mono muted">${t.dur}</td>
+  </tr>`).join("");
+
+/* ═════════ Traces list ═════════ */
+function renderTraceList(filter = "") {
+  const q = filter.toLowerCase();
+  document.getElementById("traces-tbody").innerHTML = TRACES
+    .filter(t => !q || t.model.includes(q) || t.id.includes(q) || t.messages.some(m => m.content.toLowerCase().includes(q)))
+    .map(t => `
+    <tr id="row-${t.id}" onclick="selectTrace('${t.id}')">
+      <td class="mono muted">${t.time}</td>
+      <td><span class="tag model">${t.model}</span>${t.aliased ? ' <span class="alias-arrow">→</span> <span class="tag model">' + t.fwd + "</span>" : ""}</td>
+      <td>${t.route ? '<span class="tag route">' + t.route + "</span>" : '<span class="tag err">—</span>'}</td>
+      <td><span class="tag ${t.type}">${t.type}</span></td>
+      <td><span class="tag ${t.status < 400 ? "ok" : "err"}">${t.status}</span></td>
+      <td class="muted">${t.msgs}</td>
+      <td class="mono muted">${t.dur}</td>
+    </tr>`).join("");
+}
+renderTraceList();
+document.getElementById("trace-search").oninput = e => renderTraceList(e.target.value);
+
+function jsonHtml(obj) {
+  return JSON.stringify(obj, null, 2)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/"([^"]+)":/g, '<span class="j-key">"$1"</span>:')
+    .replace(/: "([^"]*)"/g, ': <span class="j-str">"$1"</span>')
+    .replace(/: (\d+\.?\d*)/g, ': <span class="j-num">$1</span>')
+    .replace(/: (true|false|null)/g, ': <span class="j-bool">$1</span>');
+}
+
+function selectTrace(id) {
+  const t = TRACES.find(x => x.id === id);
+  document.querySelectorAll("#traces-tbody tr").forEach(r => r.classList.remove("selected"));
+  const row = document.getElementById("row-" + id);
+  if (row) row.classList.add("selected");
+
+  document.getElementById("d-title").textContent = t.model + " · " + t.time;
+  document.getElementById("d-file").textContent = t.id + "_request.json";
+  document.getElementById("d-meta").innerHTML = `
+    ${t.route ? '<span class="tag route">route: ' + t.route + "</span>" : '<span class="tag err">routing_error</span>'}
+    <span class="tag ${t.type}">${t.type}</span>
+    <span class="tag ${t.status < 400 ? "ok" : "err"}">HTTP ${t.status}</span>
+    <span class="tag sync">key: ${t.apiKey}</span>
+    <span class="tag sync">${t.dur}</span>
+    ${t.aliased ? '<span class="tag warn">alias: ' + t.model + " → " + t.fwd + "</span>" : ""}`;
+
+  document.getElementById("pane-conv").innerHTML =
+    (t.messages.some(m => m.assembled) ? '<div class="assembled-note">⚡ Streaming response — assistant message reassembled from ' + (t.chunks.length ? t.chunks[t.chunks.length-1][1].match(/\d+ chunks/)?.[0] || "SSE chunks" : "SSE chunks") + '</div>' : "") +
+    t.messages.map(m => `
+      <div class="msg ${m.role}">
+        <div class="msg-head">${m.role}${m.substituted ? '<span class="subst-note">role substituted: ' + m.substituted + "</span>" : ""}${m.assembled ? '<span class="subst-note">assembled from stream</span>' : ""}</div>
+        <div class="msg-body">${m.content.replace(/</g, "&lt;")}</div>
+      </div>`).join("") +
+    (t.error ? '<div class="msg" style="border-color:var(--red)"><div class="msg-head" style="background:rgba(248,81,73,.12);color:var(--red)">error</div><div class="msg-body">' + JSON.stringify(t.error, null, 2) + "</div></div>" : "");
+
+  document.getElementById("pane-req").innerHTML =
+    '<pre class="json">' + jsonHtml({ timestamp: "2026-07-06T" + t.time, endpoint: t.endpoint, payload: { model: t.model, stream: t.type === "stream", messages: t.messages.filter(m => m.role !== "assistant").map(m => ({ role: m.role, content: m.content.slice(0, 120) + "…" })) } }) + "</pre>";
+
+  document.getElementById("pane-resp").innerHTML =
+    '<pre class="json">' + jsonHtml(t.error
+      ? { timestamp: "2026-07-06T" + t.time, status_code: t.status, error: t.error }
+      : { timestamp: "2026-07-06T" + t.time, status_code: t.status, headers: t.respHeaders, [t.type === "stream" ? "chunks" : "body"]: t.type === "stream" ? "(" + t.chunks.length + " chunks — see SSE tab)" : { choices: [{ message: { role: "assistant", content: (t.messages.find(m => m.role === "assistant")?.content || "").slice(0, 140) + "…" } }] } }) + "</pre>";
+
+  document.getElementById("pane-chunks").innerHTML = t.chunks.length
+    ? t.chunks.map(c => '<div class="chunk-row"><span class="chunk-t">' + c[0] + '</span><span class="chunk-delta">' + c[1].replace(/</g, "&lt;") + "</span></div>").join("")
+    : '<div class="empty">Non-streaming request — no SSE chunks.</div>';
+
+  document.getElementById("pane-headers").innerHTML =
+    "<h3 style='font-size:12px;color:var(--muted);margin-bottom:8px'>REQUEST HEADERS</h3><pre class='json'>" + jsonHtml(t.reqHeaders) +
+    "</pre><h3 style='font-size:12px;color:var(--muted);margin:14px 0 8px'>RESPONSE HEADERS</h3><pre class='json'>" + jsonHtml(t.respHeaders) + "</pre>";
+}
+
+function openTrace(id) {
+  document.querySelector('[data-view="traces"]').click();
+  selectTrace(id);
+}
+
+document.querySelectorAll("#d-tabs .tab").forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll("#d-tabs .tab").forEach(x => x.classList.remove("active"));
+    document.querySelectorAll(".tab-pane").forEach(x => x.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById("pane-" + tab.dataset.tab).classList.add("active");
+  };
+});
+
+selectTrace(TRACES[0].id);
+
+/* ═════════ Live tail ═════════ */
+const tailBox = document.getElementById("tail-box");
+const tailModels = ["qwen-3.5-122b", "gpt-5.1", "gpt-5.2"];
+const tailRoutes = { "qwen-3.5-122b": "default", "gpt-5.1": "openai", "gpt-5.2": "localai2" };
+let tailOn = true, tailCount = 0;
+function addTail() {
+  if (!tailOn) return;
+  const m = tailModels[Math.floor(Math.random() * tailModels.length)];
+  const ok = Math.random() > 0.07;
+  const line = document.createElement("div");
+  line.className = "tail-line new";
+  const now = new Date().toTimeString().slice(0, 8);
+  line.innerHTML = `<span class="t">${now}</span>
+    <span class="tag ${ok ? "ok" : "err"}">${ok ? 200 : 500}</span>
+    <span class="tag model">${m}</span>
+    <span>→</span><span class="tag route">${tailRoutes[m]}</span>
+    <span class="muted">POST /v1/chat/completions · ${Math.floor(Math.random() * 4000 + 200)}ms · ${Math.floor(Math.random() * 3000 + 100)} tok</span>`;
+  tailBox.prepend(line);
+  if (tailBox.children.length > 40) tailBox.lastChild.remove();
+  tailCount++;
+  document.getElementById("tail-count").textContent = tailCount + " requests since page open";
+}
+for (let i = 0; i < 8; i++) addTail();
+setInterval(addTail, 2200);
+document.getElementById("tail-toggle").onclick = e => {
+  tailOn = !tailOn;
+  e.target.textContent = tailOn ? "● Following" : "⏸ Paused";
+  e.target.classList.toggle("live", tailOn);
+};
+
+/* ═════════ Editable configuration ═════════ */
+const SAVED_CONFIG = [
+  { name: "default", url: "http://wingman.akhbar.lan:8000/v1", key: "sk-123", models: ["*"], aliases: {}, roles: {}, log: true, enabled: true },
+  { name: "openai", url: "http://wingman.akhbar.lan:8000/v1", key: "sk-123", models: ["gpt-5.1"], aliases: {}, roles: {}, log: true, enabled: true },
+  { name: "localai2", url: "http://wingman.akhbar.home:9000/v1", key: "sk-321", models: ["gpt-5.2", "qwen3-coder"], aliases: { "gpt-5.2": "gpt-5.1", "opus-4.5": "qwen3-coder" }, roles: { developer: "system" }, log: false, enabled: false },
+];
+let CONFIG = JSON.parse(JSON.stringify(SAVED_CONFIG));
+let dirty = false;
+let editingIndex = null;
+
+function markDirty(d) {
+  dirty = d;
+  document.getElementById("unsaved-bar").classList.toggle("show", dirty);
+}
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+function maskKey(k) { return k ? k.slice(0, 4) + "••••" : "—"; }
+
+function mapHtml(obj) {
+  const entries = Object.entries(obj);
+  if (!entries.length) return '<span class="muted">—</span>';
+  return entries.map(([a, b]) => `${a}<span class="alias-arrow">→</span>${b}`).join("<br>");
+}
+
+function renderConfig() {
+  document.getElementById("config-grid").innerHTML = CONFIG.map((ep, i) => `
+    <div class="ep-card" style="${ep.enabled ? "" : "opacity:.55"}">
+      <div class="ep-head">
+        <span class="name">${ep.name}</span>
+        ${ep.models.includes("*") ? '<span class="tag route">wildcard *</span>' : ""}
+        ${ep.enabled ? "" : '<span class="tag warn">disabled</span>'}
+        <div class="ep-actions">
+          <div class="toggle ${ep.log ? "" : "off"}" title="Trace logging" onclick="toggleLog(${i})"></div>
+          <button class="icon-btn" title="Edit" onclick="openEditor(${i})">✎</button>
+          <button class="icon-btn danger" title="Delete" onclick="deleteEndpoint(${i})">🗑</button>
+        </div>
+      </div>
+      <div class="ep-body">
+        <div class="kv"><span class="k">Base URL</span><span class="v">${ep.url}</span></div>
+        <div class="kv"><span class="k">API key</span><span class="v">${maskKey(ep.key)}</span></div>
+        <div class="kv"><span class="k">Models</span><span class="v">${ep.models.map(m => '<span class="tag model">' + m + "</span>").join(" ")}</span></div>
+        <div class="kv"><span class="k">Aliases</span><span class="v">${mapHtml(ep.aliases)}</span></div>
+        <div class="kv"><span class="k">Role subst.</span><span class="v">${mapHtml(ep.roles)}</span></div>
+        <div class="kv"><span class="k">Trace log</span><span class="v"><span class="tag ${ep.log ? "ok" : "warn"}">${ep.log ? "enabled" : "off"}</span></span></div>
+      </div>
+    </div>`).join("");
+  renderYaml();
+}
+
+function renderYaml() {
+  const esc = s => String(s).replace(/</g, "&lt;");
+  let y = '<span class="y-key">llmproxy</span>:\n' +
+    '  <span class="y-key">host</span>: <span class="y-str">"0.0.0.0"</span>\n' +
+    '  <span class="y-key">port</span>: 8000\n' +
+    '  <span class="y-key">logs_dir</span>: <span class="y-str">"./logs"</span>\n' +
+    '  <span class="y-key">trace_dir</span>: <span class="y-str">"./traces"</span>\n\n' +
+    '  <span class="y-key">endpoints</span>:\n';
+  for (const ep of CONFIG) {
+    const c = ep.enabled ? "" : "# ";
+    const pre = "    " + c;
+    y += `${pre}<span class="y-key">${esc(ep.name)}</span>:${ep.enabled ? "" : ' <span class="y-comment"># disabled</span>'}\n`;
+    y += `${pre}  <span class="y-key">base_url</span>: <span class="y-str">"${esc(ep.url)}"</span>\n`;
+    if (ep.key) y += `${pre}  <span class="y-key">api_key</span>: <span class="y-str">${esc(ep.key).slice(0, 4)}••••</span>\n`;
+    y += `${pre}  <span class="y-key">models</span>: [ ${ep.models.map(m => '<span class="y-str">\'' + esc(m) + "'</span>").join(", ")} ]\n`;
+    if (Object.keys(ep.aliases).length) {
+      y += `${pre}  <span class="y-key">aliases</span>:\n`;
+      for (const [a, b] of Object.entries(ep.aliases)) y += `${pre}    <span class="y-str">"${esc(a)}"</span>: <span class="y-str">"${esc(b)}"</span>\n`;
+    }
+    if (Object.keys(ep.roles).length) {
+      y += `${pre}  <span class="y-key">substitute_role</span>:\n`;
+      for (const [a, b] of Object.entries(ep.roles)) y += `${pre}    <span class="y-str">"${esc(a)}"</span>: <span class="y-str">"${esc(b)}"</span>\n`;
+    }
+    y += `${pre}  <span class="y-key">log</span>: <span class="j-bool">${ep.log}</span>\n\n`;
+  }
+  document.getElementById("yaml-preview").innerHTML = y;
+}
+
+function toggleLog(i) {
+  CONFIG[i].log = !CONFIG[i].log;
+  markDirty(true);
+  renderConfig();
+}
+
+function deleteEndpoint(i) {
+  if (!confirm(`Delete endpoint "${CONFIG[i].name}"?`)) return;
+  CONFIG.splice(i, 1);
+  markDirty(true);
+  renderConfig();
+}
+
+function reloadConfig() {
+  CONFIG = JSON.parse(JSON.stringify(SAVED_CONFIG));
+  markDirty(false);
+  renderConfig();
+  toast("Config reloaded from llmproxy.yaml");
+}
+
+function saveConfig() {
+  SAVED_CONFIG.length = 0;
+  SAVED_CONFIG.push(...JSON.parse(JSON.stringify(CONFIG)));
+  markDirty(false);
+  toast("Saved to llmproxy.yaml — proxy picks it up on next request");
+}
+
+/* ── Modal editor ── */
+let modelChips = [];
+
+function addMapRow(containerId, k = "", v = "") {
+  const row = document.createElement("div");
+  row.className = "map-row";
+  row.innerHTML = `<input type="text" placeholder="from" value="${k}">
+    <span class="arrow">→</span>
+    <input type="text" placeholder="to" value="${v}">
+    <button class="icon-btn danger" onclick="this.parentElement.remove()">✕</button>`;
+  document.getElementById(containerId).appendChild(row);
+}
+
+function renderChips() {
+  const box = document.getElementById("f-models");
+  box.querySelectorAll(".chip").forEach(c => c.remove());
+  const input = document.getElementById("f-models-input");
+  modelChips.forEach((m, i) => {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.innerHTML = `${m}<span onclick="modelChips.splice(${i},1);renderChips()">✕</span>`;
+    box.insertBefore(chip, input);
+  });
+}
+
+document.getElementById("f-models-input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.value.trim()) {
+    e.preventDefault();
+    if (!modelChips.includes(e.target.value.trim())) modelChips.push(e.target.value.trim());
+    e.target.value = "";
+    renderChips();
+  } else if (e.key === "Backspace" && !e.target.value && modelChips.length) {
+    modelChips.pop();
+    renderChips();
+  }
+});
+
+function openEditor(i) {
+  editingIndex = i;
+  const ep = i === null
+    ? { name: "", url: "", key: "", models: [], aliases: {}, roles: {}, log: true, enabled: true }
+    : CONFIG[i];
+  document.getElementById("modal-title").textContent = i === null ? "Add endpoint" : "Edit endpoint — " + ep.name;
+  document.getElementById("f-name").value = ep.name;
+  document.getElementById("f-url").value = ep.url;
+  document.getElementById("f-key").value = ep.key;
+  document.getElementById("f-enabled").classList.toggle("off", !ep.enabled);
+  document.getElementById("f-log").classList.toggle("off", !ep.log);
+  modelChips = [...ep.models];
+  renderChips();
+  document.getElementById("f-aliases").innerHTML = "";
+  document.getElementById("f-roles").innerHTML = "";
+  Object.entries(ep.aliases).forEach(([k, v]) => addMapRow("f-aliases", k, v));
+  Object.entries(ep.roles).forEach(([k, v]) => addMapRow("f-roles", k, v));
+  document.getElementById("ep-modal").classList.add("open");
+}
+
+function closeEditor() {
+  document.getElementById("ep-modal").classList.remove("open");
+}
+
+function collectMap(containerId) {
+  const out = {};
+  document.querySelectorAll(`#${containerId} .map-row`).forEach(row => {
+    const [k, v] = row.querySelectorAll("input");
+    if (k.value.trim() && v.value.trim()) out[k.value.trim()] = v.value.trim();
+  });
+  return out;
+}
+
+function applyEditor() {
+  const name = document.getElementById("f-name").value.trim();
+  const url = document.getElementById("f-url").value.trim();
+  if (!name || !url) { alert("Endpoint name and Base URL are required."); return; }
+  if (!modelChips.length) { alert("At least one model (or *) is required — endpoints without models are ignored by the proxy."); return; }
+  const nameClash = CONFIG.some((ep, i) => ep.name === name && i !== editingIndex);
+  if (nameClash) { alert(`An endpoint named "${name}" already exists.`); return; }
+  const ep = {
+    name, url,
+    key: document.getElementById("f-key").value.trim(),
+    models: [...modelChips],
+    aliases: collectMap("f-aliases"),
+    roles: collectMap("f-roles"),
+    log: !document.getElementById("f-log").classList.contains("off"),
+    enabled: !document.getElementById("f-enabled").classList.contains("off"),
+  };
+  if (editingIndex === null) CONFIG.push(ep);
+  else CONFIG[editingIndex] = ep;
+  markDirty(true);
+  closeEditor();
+  renderConfig();
+}
+
+document.getElementById("ep-modal").addEventListener("click", e => {
+  if (e.target.id === "ep-modal") closeEditor();
+});
+
+/* ── Routing tester (uses live CONFIG, mirrors _select_endpoint_for_model) ── */
+document.getElementById("route-btn").onclick = () => {
+  const model = document.getElementById("route-input").value.trim() || "gpt-5.1";
+  const active = CONFIG.filter(ep => ep.enabled);
+  let r = active.find(ep => ep.models.includes(model) || model in ep.aliases);
+  const wildcard = !r;
+  if (!r) r = active.find(ep => ep.models.includes("*"));
+  const el = document.getElementById("route-result");
+  if (r) {
+    const fwd = r.aliases[model] || model;
+    el.style.borderColor = wildcard ? "rgba(79,156,249,.3)" : "rgba(63,185,80,.3)";
+    el.style.background = wildcard ? "rgba(79,156,249,.08)" : "rgba(63,185,80,.08)";
+    el.innerHTML = `<b>${model}</b> → ${wildcard ? "wildcard " : ""}endpoint <span class="tag route">${r.name}</span> · forwarded as <code>${fwd}</code>${fwd !== model ? " (aliased)" : " (no alias)"} · target <code class="mono">${r.url}</code> · tracing <span class="tag ${r.log ? "ok" : "warn"}">${r.log ? "on" : "off"}</span>`;
+  } else {
+    el.style.borderColor = "rgba(248,81,73,.3)";
+    el.style.background = "rgba(248,81,73,.08)";
+    el.innerHTML = `<b>${model}</b> → <span class="tag err">404 routing_error</span> · no endpoint matches and no wildcard fallback configured`;
+  }
+};
+
+renderConfig();
+</script>
+</body>
+</html>

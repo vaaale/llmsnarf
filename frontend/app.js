@@ -1,0 +1,564 @@
+"use strict";
+
+const API = "api";
+
+/* ───────── helpers ───────── */
+async function apiGet(path) {
+  const res = await fetch(`${API}/${path}`);
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+async function apiPut(path, body) {
+  const res = await fetch(`${API}/${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try { detail = (await res.json()).detail || detail; } catch (e) { /* ignore */ }
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function toast(msg, isError = false) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.toggle("error", isError);
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+function fmtTime(iso) {
+  if (!iso) return "–";
+  const idx = iso.indexOf("T");
+  return idx >= 0 ? iso.slice(idx + 1, idx + 13) : iso;
+}
+
+function fmtDuration(ms) {
+  if (ms === null || ms === undefined) return "–";
+  if (ms < 1000) return Math.round(ms) + "ms";
+  return (ms / 1000).toFixed(1) + "s";
+}
+
+function statusTag(t) {
+  if (t.error) return '<span class="tag err" title="' + esc(t.error) + '">error</span>';
+  if (t.status_code === null || t.status_code === undefined) return '<span class="tag warn">?</span>';
+  return `<span class="tag ${t.status_code < 400 ? "ok" : "err"}">${t.status_code}</span>`;
+}
+
+function typeTag(t) {
+  return `<span class="tag ${t.stream ? "stream" : "sync"}">${t.stream ? "stream" : "sync"}</span>`;
+}
+
+function jsonHtml(obj) {
+  return esc(JSON.stringify(obj, null, 2))
+    .replace(/&quot;([^&]+?)&quot;:/g, '<span class="j-key" style="color:var(--accent)">"$1"</span>:');
+}
+
+/* ───────── navigation ───────── */
+const titles = { dashboard: "Dashboard", traces: "Traces", live: "Live Tail", config: "Configuration" };
+document.querySelectorAll(".nav-item").forEach((item) => {
+  item.onclick = () => switchView(item.dataset.view);
+});
+
+function switchView(view) {
+  document.querySelectorAll(".nav-item").forEach((i) => i.classList.toggle("active", i.dataset.view === view));
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+  document.getElementById("view-" + view).classList.add("active");
+  document.getElementById("view-title").textContent = titles[view];
+  if (view === "dashboard") loadDashboard();
+  if (view === "traces") loadTraces();
+  if (view === "config") loadConfig();
+}
+
+document.getElementById("refresh-btn").onclick = () => {
+  const active = document.querySelector(".nav-item.active").dataset.view;
+  switchView(active);
+};
+
+/* ───────── dashboard ───────── */
+async function loadDashboard() {
+  try {
+    const [stats, recent] = await Promise.all([apiGet("stats?hours=24"), apiGet("traces?limit=10")]);
+
+    document.getElementById("kpi-total").textContent = stats.total.toLocaleString();
+    document.getElementById("kpi-errors").textContent = (stats.error_rate * 100).toFixed(1) + "%";
+    document.getElementById("kpi-latency").innerHTML = stats.avg_duration_ms !== null
+      ? `${Math.round(stats.avg_duration_ms)}<span class="kpi-unit"> ms</span>`
+      : "–";
+    const streamCount = recent.filter((t) => t.stream).length;
+    document.getElementById("kpi-stream").textContent = recent.length
+      ? Math.round((streamCount / recent.length) * 100) + "%"
+      : "–";
+
+    const chart = document.getElementById("traffic-chart");
+    chart.innerHTML = "";
+    const max = Math.max(...stats.requests_per_hour, 1);
+    stats.requests_per_hour.forEach((v, i) => {
+      const b = document.createElement("div");
+      const errs = stats.errors_per_hour[i];
+      b.className = "bar" + (errs > 0 && errs >= v / 2 ? " err" : "");
+      b.style.height = (v / max) * 100 + "%";
+      b.dataset.v = v + " req" + (errs ? ` · ${errs} errors` : "");
+      chart.appendChild(b);
+    });
+
+    renderDist("model-dist", stats.by_model, stats.total, "var(--purple)");
+    renderDist("key-dist", stats.by_api_key, stats.total, "var(--accent)");
+
+    document.getElementById("recent-tbody").innerHTML = recent.map((t) => `
+      <tr onclick="openTraceFromDashboard('${esc(t.id)}')">
+        <td class="mono muted">${fmtTime(t.timestamp)}</td>
+        <td><span class="tag model">${esc(t.model || "?")}</span></td>
+        <td class="mono muted">${esc(t.endpoint)}</td>
+        <td>${typeTag(t)}</td>
+        <td>${statusTag(t)}</td>
+        <td class="muted">${t.message_count}</td>
+        <td class="mono muted">${fmtDuration(t.duration_ms)}</td>
+      </tr>`).join("") || '<tr><td colspan="7" class="empty">No traces yet</td></tr>';
+  } catch (e) {
+    toast("Failed to load dashboard: " + e.message, true);
+  }
+}
+
+function renderDist(elId, counts, total, color) {
+  const rows = Object.entries(counts);
+  document.getElementById(elId).innerHTML = rows.length
+    ? rows.map(([name, n]) => {
+        const pct = total ? Math.round((n / total) * 100) : 0;
+        return `<div class="dist-row">
+          <span class="mono" title="${esc(name)}">${esc(name)}</span>
+          <div class="dist-bar-wrap"><div class="dist-bar" style="width:${pct}%;background:${color}"></div></div>
+          <span class="dist-pct">${pct}%</span>
+        </div>`;
+      }).join("")
+    : '<div class="muted" style="font-size:12px">No data</div>';
+}
+
+function openTraceFromDashboard(id) {
+  switchView("traces");
+  selectTrace(id);
+}
+
+/* ───────── traces ───────── */
+let traceFilters = { q: "", model: "", api_key: "", status: "" };
+let selectedTraceId = null;
+
+async function loadTraces() {
+  const params = new URLSearchParams({ limit: "200" });
+  if (traceFilters.q) params.set("q", traceFilters.q);
+  if (traceFilters.model) params.set("model", traceFilters.model);
+  if (traceFilters.api_key) params.set("api_key", traceFilters.api_key);
+  if (traceFilters.status) params.set("status", traceFilters.status);
+  try {
+    const traces = await apiGet("traces?" + params.toString());
+    populateFilterOptions(traces);
+    document.getElementById("traces-tbody").innerHTML = traces.map((t) => `
+      <tr id="row-${esc(t.id)}" class="${t.id === selectedTraceId ? "selected" : ""}" onclick="selectTrace('${esc(t.id)}')">
+        <td class="mono muted">${fmtTime(t.timestamp)}</td>
+        <td><span class="tag model">${esc(t.model || "?")}</span></td>
+        <td>${typeTag(t)}</td>
+        <td>${statusTag(t)}</td>
+        <td class="muted">${t.message_count}</td>
+        <td class="mono muted">${fmtDuration(t.duration_ms)}</td>
+      </tr>`).join("") || '<tr><td colspan="6" class="empty">No traces match</td></tr>';
+  } catch (e) {
+    toast("Failed to load traces: " + e.message, true);
+  }
+}
+
+function populateFilterOptions(traces) {
+  const fill = (id, values, current) => {
+    const sel = document.getElementById(id);
+    const first = sel.options[0].outerHTML;
+    sel.innerHTML = first + [...new Set(values)].sort().map((v) =>
+      `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(v)}</option>`).join("");
+  };
+  fill("f-model", traces.map((t) => t.model).filter(Boolean), traceFilters.model);
+  fill("f-apikey", traces.map((t) => t.api_key).filter(Boolean), traceFilters.api_key);
+}
+
+let searchTimer = null;
+document.getElementById("trace-search").oninput = (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { traceFilters.q = e.target.value.trim(); loadTraces(); }, 300);
+};
+document.getElementById("f-model").onchange = (e) => { traceFilters.model = e.target.value; loadTraces(); };
+document.getElementById("f-apikey").onchange = (e) => { traceFilters.api_key = e.target.value; loadTraces(); };
+document.getElementById("f-status").onchange = (e) => { traceFilters.status = e.target.value; loadTraces(); };
+document.getElementById("trace-refresh").onclick = loadTraces;
+
+async function selectTrace(id) {
+  selectedTraceId = id;
+  document.querySelectorAll("#traces-tbody tr").forEach((r) => r.classList.remove("selected"));
+  const row = document.getElementById("row-" + id);
+  if (row) row.classList.add("selected");
+
+  let d;
+  try {
+    d = await apiGet("traces/" + encodeURIComponent(id));
+  } catch (e) {
+    toast("Failed to load trace: " + e.message, true);
+    return;
+  }
+  const s = d.summary;
+
+  document.getElementById("d-title").textContent = (s.model || "?") + " · " + fmtTime(s.timestamp);
+  document.getElementById("d-file").textContent = s.id;
+  document.getElementById("d-meta").innerHTML = `
+    ${typeTag(s)} ${statusTag(s)}
+    <span class="tag sync">key: ${esc(s.api_key)}</span>
+    <span class="tag sync">${fmtDuration(s.duration_ms)}</span>
+    <span class="tag route">${esc(s.endpoint)}</span>`;
+
+  renderConversation(d);
+  document.getElementById("pane-req").innerHTML =
+    `<pre class="json">${jsonHtml(d.request_payload)}</pre>`;
+  document.getElementById("pane-resp").innerHTML = d.response_body !== null
+    ? `<pre class="json">${jsonHtml(d.response_body)}</pre>`
+    : d.assembled_content
+      ? `<div class="assembled-note">⚡ Streaming response — assembled from ${d.response_chunks.length} chunks</div><pre class="json">${esc(d.assembled_content)}</pre>`
+      : '<div class="empty">No response captured.</div>';
+  document.getElementById("pane-chunks").innerHTML = d.response_chunks.length
+    ? d.response_chunks.map((c, i) =>
+        `<div class="chunk-row"><span class="chunk-t">#${i}</span><span class="chunk-delta">${esc(c.length > 400 ? c.slice(0, 400) + "…" : c)}</span></div>`).join("")
+    : '<div class="empty">Non-streaming request — no SSE chunks.</div>';
+  document.getElementById("pane-headers").innerHTML =
+    `<h3 style="font-size:12px;color:var(--muted);margin-bottom:8px">REQUEST HEADERS</h3><pre class="json">${jsonHtml(d.request_headers)}</pre>` +
+    `<h3 style="font-size:12px;color:var(--muted);margin:14px 0 8px">RESPONSE HEADERS</h3><pre class="json">${jsonHtml(d.response_headers)}</pre>`;
+}
+
+function messageContentToText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => (part && part.type === "text" ? part.text : `[${part?.type || "content"}]`)).join("\n");
+  }
+  return JSON.stringify(content, null, 2);
+}
+
+function renderConversation(d) {
+  const payload = d.request_payload;
+  const messages = payload && Array.isArray(payload.messages) ? payload.messages : [];
+  let html = "";
+  if (d.assembled_content) {
+    html += `<div class="assembled-note">⚡ Streaming response — assistant message assembled from ${d.response_chunks.length} SSE chunks</div>`;
+  }
+  html += messages.map((m) => {
+    const role = esc(m.role || "unknown");
+    return `<div class="msg ${role}">
+      <div class="msg-head">${role}</div>
+      <div class="msg-body">${esc(messageContentToText(m.content))}</div>
+    </div>`;
+  }).join("");
+
+  let assistant = d.assembled_content;
+  if (!assistant && d.response_body && Array.isArray(d.response_body.choices)) {
+    const choice = d.response_body.choices[0];
+    assistant = choice?.message?.content || choice?.text || "";
+  }
+  if (assistant) {
+    html += `<div class="msg assistant">
+      <div class="msg-head">assistant <span class="subst-note">response</span></div>
+      <div class="msg-body">${esc(assistant)}</div>
+    </div>`;
+  }
+  if (d.summary.error) {
+    html += `<div class="msg error">
+      <div class="msg-head">error</div>
+      <div class="msg-body">${esc(d.summary.error)}</div>
+    </div>`;
+  }
+  document.getElementById("pane-conv").innerHTML = html || '<div class="empty">No messages in payload.</div>';
+}
+
+document.querySelectorAll("#d-tabs .tab").forEach((tab) => {
+  tab.onclick = () => {
+    document.querySelectorAll("#d-tabs .tab").forEach((x) => x.classList.remove("active"));
+    document.querySelectorAll(".tab-pane").forEach((x) => x.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById("pane-" + tab.dataset.tab).classList.add("active");
+  };
+});
+
+/* ───────── live tail ───────── */
+let tailOn = true;
+let tailSeen = new Set();
+let tailCount = 0;
+
+async function pollTail() {
+  if (!tailOn || !document.getElementById("view-live").classList.contains("active")) return;
+  try {
+    const traces = await apiGet("traces?limit=25");
+    const box = document.getElementById("tail-box");
+    for (const t of traces.reverse()) {
+      if (tailSeen.has(t.id)) continue;
+      tailSeen.add(t.id);
+      const line = document.createElement("div");
+      line.className = "tail-line new";
+      line.onclick = () => openTraceFromDashboard(t.id);
+      line.innerHTML = `<span class="t">${fmtTime(t.timestamp)}</span>
+        ${statusTag(t)} <span class="tag model">${esc(t.model || "?")}</span>
+        <span class="muted">${esc(t.endpoint)} · ${fmtDuration(t.duration_ms)} · ${t.message_count} msgs · ${esc(t.api_key)}</span>`;
+      box.prepend(line);
+      tailCount++;
+    }
+    while (box.children.length > 100) box.lastChild.remove();
+    document.getElementById("tail-count").textContent = tailCount + " requests observed";
+  } catch (e) { /* transient poll errors are ignored */ }
+}
+setInterval(pollTail, 3000);
+
+document.getElementById("tail-toggle").onclick = (e) => {
+  tailOn = !tailOn;
+  e.target.textContent = tailOn ? "● Following" : "⏸ Paused";
+  e.target.classList.toggle("live", tailOn);
+};
+
+/* ───────── configuration ───────── */
+let CONFIG = null;
+let editingIndex = null;
+let modelChips = [];
+
+async function loadConfig() {
+  try {
+    CONFIG = await apiGet("config");
+    document.getElementById("cfg-listen").textContent = `${CONFIG.host || "0.0.0.0"}:${CONFIG.port || 8000}`;
+    document.getElementById("cfg-logs").textContent = CONFIG.logs_dir || "./logs";
+    document.getElementById("cfg-traces").textContent = CONFIG.trace_dir || "./logs";
+    document.getElementById("hdr-trace-dir").textContent = CONFIG.trace_dir || "./logs";
+    document.getElementById("footer-info").textContent = `${CONFIG.host || "0.0.0.0"}:${CONFIG.port || 8000}`;
+    renderConfigCards();
+  } catch (e) {
+    toast("Failed to load config: " + e.message, true);
+  }
+}
+
+function mapHtml(obj) {
+  const entries = Object.entries(obj || {});
+  if (!entries.length) return '<span class="muted">—</span>';
+  return entries.map(([a, b]) => `${esc(a)}<span class="alias-arrow">→</span>${esc(b)}`).join("<br>");
+}
+
+function renderConfigCards() {
+  document.getElementById("config-grid").innerHTML = CONFIG.endpoints.map((ep, i) => `
+    <div class="ep-card" style="${ep.enabled ? "" : "opacity:.55"}">
+      <div class="ep-head">
+        <span class="name">${esc(ep.name)}</span>
+        ${ep.models.includes("*") ? '<span class="tag route">wildcard *</span>' : ""}
+        ${ep.enabled ? "" : '<span class="tag warn">disabled</span>'}
+        <div class="ep-actions">
+          <div class="toggle ${ep.log ? "" : "off"}" title="Trace logging" onclick="quickToggleLog(${i})"></div>
+          <button class="icon-btn" title="Edit" onclick="openEditor(${i})">✎</button>
+          <button class="icon-btn danger" title="Delete" onclick="deleteEndpoint(${i})">🗑</button>
+        </div>
+      </div>
+      <div class="ep-body">
+        <div class="kv"><span class="k">Base URL</span><span class="v">${esc(ep.base_url)}</span></div>
+        <div class="kv"><span class="k">API key</span><span class="v">${esc(ep.api_key_masked) || "—"}</span></div>
+        <div class="kv"><span class="k">Models</span><span class="v">${ep.models.map((m) => '<span class="tag model">' + esc(m) + "</span>").join(" ")}</span></div>
+        <div class="kv"><span class="k">Aliases</span><span class="v">${mapHtml(ep.aliases)}</span></div>
+        <div class="kv"><span class="k">Role subst.</span><span class="v">${mapHtml(ep.substitute_role)}</span></div>
+        <div class="kv"><span class="k">Trace log</span><span class="v"><span class="tag ${ep.log ? "ok" : "warn"}">${ep.log ? "enabled" : "off"}</span></span></div>
+      </div>
+    </div>`).join("") || '<div class="empty">No endpoints configured.</div>';
+}
+
+async function persistConfig() {
+  const payload = {
+    endpoints: CONFIG.endpoints.map((ep) => ({
+      name: ep.name,
+      base_url: ep.base_url,
+      api_key: ep.api_key || null,
+      models: ep.models,
+      aliases: ep.aliases || {},
+      substitute_role: ep.substitute_role || {},
+      log: ep.log,
+      enabled: ep.enabled,
+    })),
+  };
+  CONFIG = await apiPut("config", payload);
+  renderConfigCards();
+}
+
+async function quickToggleLog(i) {
+  CONFIG.endpoints[i].log = !CONFIG.endpoints[i].log;
+  try {
+    await persistConfig();
+    toast("Saved llmproxy.yaml");
+  } catch (e) {
+    toast("Save failed: " + e.message, true);
+    loadConfig();
+  }
+}
+
+async function deleteEndpoint(i) {
+  if (!confirm(`Delete endpoint "${CONFIG.endpoints[i].name}"?`)) return;
+  CONFIG.endpoints.splice(i, 1);
+  try {
+    await persistConfig();
+    toast("Endpoint deleted — llmproxy.yaml updated");
+  } catch (e) {
+    toast("Save failed: " + e.message, true);
+    loadConfig();
+  }
+}
+
+document.getElementById("cfg-reload-btn").onclick = () => { loadConfig(); toast("Config reloaded"); };
+document.getElementById("add-ep-btn").onclick = () => openEditor(null);
+
+/* modal */
+function addMapRow(containerId, k = "", v = "") {
+  const row = document.createElement("div");
+  row.className = "map-row";
+  row.innerHTML = `<input type="text" placeholder="from" value="${esc(k)}">
+    <span class="arrow">→</span>
+    <input type="text" placeholder="to" value="${esc(v)}">
+    <button class="icon-btn danger">✕</button>`;
+  row.querySelector("button").onclick = () => row.remove();
+  document.getElementById(containerId).appendChild(row);
+}
+
+document.querySelectorAll(".add-row-btn").forEach((btn) => {
+  btn.onclick = () => addMapRow(btn.dataset.target);
+});
+
+function renderChips() {
+  const box = document.getElementById("fe-models");
+  box.querySelectorAll(".chip").forEach((c) => c.remove());
+  const input = document.getElementById("fe-models-input");
+  modelChips.forEach((m, i) => {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.innerHTML = `${esc(m)}<span>✕</span>`;
+    chip.querySelector("span").onclick = () => { modelChips.splice(i, 1); renderChips(); };
+    box.insertBefore(chip, input);
+  });
+}
+
+document.getElementById("fe-models").onclick = function () { this.querySelector("input").focus(); };
+document.getElementById("fe-models-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.value.trim()) {
+    e.preventDefault();
+    const v = e.target.value.trim();
+    if (!modelChips.includes(v)) modelChips.push(v);
+    e.target.value = "";
+    renderChips();
+  } else if (e.key === "Backspace" && !e.target.value && modelChips.length) {
+    modelChips.pop();
+    renderChips();
+  }
+});
+
+function openEditor(i) {
+  editingIndex = i;
+  const ep = i === null
+    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true }
+    : CONFIG.endpoints[i];
+  document.getElementById("modal-title").textContent = i === null ? "Add endpoint" : "Edit endpoint — " + ep.name;
+  document.getElementById("fe-name").value = ep.name;
+  document.getElementById("fe-url").value = ep.base_url;
+  document.getElementById("fe-key").value = "";
+  document.getElementById("fe-key").placeholder = ep.api_key_masked || "sk-…";
+  document.getElementById("fe-key-hint").textContent = i === null
+    ? "Optional. Leave empty to forward the client's Authorization header."
+    : `Current: ${ep.api_key_masked || "not set"}. Leave empty to keep it.`;
+  document.getElementById("fe-enabled").classList.toggle("off", !ep.enabled);
+  document.getElementById("fe-log").classList.toggle("off", !ep.log);
+  modelChips = [...ep.models];
+  renderChips();
+  document.getElementById("fe-aliases").innerHTML = "";
+  document.getElementById("fe-roles").innerHTML = "";
+  Object.entries(ep.aliases || {}).forEach(([k, v]) => addMapRow("fe-aliases", k, v));
+  Object.entries(ep.substitute_role || {}).forEach(([k, v]) => addMapRow("fe-roles", k, v));
+  document.getElementById("ep-modal").classList.add("open");
+}
+
+function closeEditor() {
+  document.getElementById("ep-modal").classList.remove("open");
+}
+
+document.getElementById("modal-close").onclick = closeEditor;
+document.getElementById("modal-cancel").onclick = closeEditor;
+document.getElementById("ep-modal").addEventListener("click", (e) => {
+  if (e.target.id === "ep-modal") closeEditor();
+});
+document.getElementById("fe-enabled").onclick = function () { this.classList.toggle("off"); };
+document.getElementById("fe-log").onclick = function () { this.classList.toggle("off"); };
+
+function collectMap(containerId) {
+  const out = {};
+  document.querySelectorAll(`#${containerId} .map-row`).forEach((row) => {
+    const [k, v] = row.querySelectorAll("input");
+    if (k.value.trim() && v.value.trim()) out[k.value.trim()] = v.value.trim();
+  });
+  return out;
+}
+
+document.getElementById("modal-apply").onclick = async () => {
+  const name = document.getElementById("fe-name").value.trim();
+  const url = document.getElementById("fe-url").value.trim();
+  if (!name || !url) { toast("Endpoint name and Base URL are required", true); return; }
+  if (!modelChips.length) { toast("At least one model (or *) is required", true); return; }
+  const clash = CONFIG.endpoints.some((ep, i) => ep.name === name && i !== editingIndex);
+  if (clash) { toast(`An endpoint named "${name}" already exists`, true); return; }
+
+  const newKey = document.getElementById("fe-key").value.trim();
+  const ep = {
+    name,
+    base_url: url,
+    api_key: newKey || null,
+    api_key_masked: "",
+    models: [...modelChips],
+    aliases: collectMap("fe-aliases"),
+    substitute_role: collectMap("fe-roles"),
+    log: !document.getElementById("fe-log").classList.contains("off"),
+    enabled: !document.getElementById("fe-enabled").classList.contains("off"),
+  };
+  if (editingIndex === null) CONFIG.endpoints.push(ep);
+  else CONFIG.endpoints[editingIndex] = ep;
+
+  try {
+    await persistConfig();
+    closeEditor();
+    toast("Saved llmproxy.yaml — active immediately");
+  } catch (e) {
+    toast("Save failed: " + e.message, true);
+    loadConfig();
+  }
+};
+
+/* routing tester */
+document.getElementById("route-btn").onclick = async () => {
+  const model = document.getElementById("route-input").value.trim();
+  if (!model) return;
+  const el = document.getElementById("route-result");
+  el.style.display = "block";
+  try {
+    const r = await apiGet("config/resolve?model=" + encodeURIComponent(model));
+    if (r.endpoint) {
+      el.style.borderColor = r.wildcard ? "rgba(79,156,249,.3)" : "rgba(63,185,80,.3)";
+      el.style.background = r.wildcard ? "rgba(79,156,249,.08)" : "rgba(63,185,80,.08)";
+      el.innerHTML = `<b>${esc(model)}</b> → ${r.wildcard ? "wildcard " : ""}endpoint <span class="tag route">${esc(r.endpoint)}</span>
+        · forwarded as <code>${esc(r.forwarded_model)}</code>${r.forwarded_model !== model ? " (aliased)" : ""}
+        · target <code class="mono">${esc(r.base_url)}</code>
+        · tracing <span class="tag ${r.log ? "ok" : "warn"}">${r.log ? "on" : "off"}</span>`;
+    } else {
+      el.style.borderColor = "rgba(248,81,73,.3)";
+      el.style.background = "rgba(248,81,73,.08)";
+      el.innerHTML = `<b>${esc(model)}</b> → <span class="tag err">404 routing_error</span> · no endpoint matches and no wildcard fallback configured`;
+    }
+  } catch (e) {
+    toast("Resolve failed: " + e.message, true);
+  }
+};
+
+/* ───────── init ───────── */
+loadConfig();
+loadDashboard();

@@ -9,3 +9,7 @@ class LLMProxyConfigRepository(ABC):
     @abstractmethod
     def load(self) -> LLMProxyConfig:
         raise NotImplementedError
+
+    @abstractmethod
+    def save(self, config: LLMProxyConfig) -> None:
+        raise NotImplementedError

@@ -12,6 +12,7 @@ class EndpointConfig:
     aliases: dict[str, str]
     log: bool
     substitute_role: dict[str, str] | None
+    enabled: bool = True
 
 
 @dataclass(frozen=True)

@@ -10,7 +10,12 @@ logs_dir, trace_dir = resolve_logs_trace_dirs(settings, config_repository)
 logs_dir.mkdir(parents=True, exist_ok=True)
 trace_dir.mkdir(parents=True, exist_ok=True)
 
-app = create_app(config_repository=config_repository, logs_dir=logs_dir, trace_dir=trace_dir)
+app = create_app(
+    config_repository=config_repository,
+    logs_dir=logs_dir,
+    trace_dir=trace_dir,
+    frontend_dir=settings.frontend_dir,
+)
 
 
 def main():
