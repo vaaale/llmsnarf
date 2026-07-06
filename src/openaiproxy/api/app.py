@@ -13,8 +13,11 @@ from openaiproxy.interface.repository import LLMProxyConfigRepository
 from openaiproxy.logging_config import configure_logging
 from openaiproxy.middleware.exception_logging import ExceptionLoggingMiddleware
 from openaiproxy.services.config_service import ConfigService
+from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.proxy_service import ProxyService
+from openaiproxy.services.responses_service import ResponsesService
 from openaiproxy.services.trace_service import TraceService
+from openaiproxy.services.web_search_service import WebSearchService
 
 
 def create_app(
@@ -29,7 +32,23 @@ def create_app(
     # Add exception logging middleware first to catch all exceptions
     app.add_middleware(ExceptionLoggingMiddleware, logger=logger)
     
-    app.state.proxy_service = ProxyService(config_repository=config_repository, trace_dir=Path(trace_dir), logger=logger)
+    model_tracker = ModelTrackerService(logger=logger)
+    app.state.model_tracker = model_tracker
+    app.state.proxy_service = ProxyService(
+        config_repository=config_repository,
+        trace_dir=Path(trace_dir),
+        logger=logger,
+        model_tracker=model_tracker,
+    )
+    web_search_service = WebSearchService(config_repository=config_repository, logger=logger)
+    app.state.web_search_service = web_search_service
+    app.state.responses_service = ResponsesService(
+        config_repository=config_repository,
+        trace_dir=Path(trace_dir),
+        logger=logger,
+        web_search_service=web_search_service,
+        model_tracker=model_tracker,
+    )
     app.state.config_service = ConfigService(config_repository=config_repository)
     app.state.trace_service = TraceService(trace_repository=FSTraceRepository(trace_dir=Path(trace_dir)))
     app.include_router(ui_router)

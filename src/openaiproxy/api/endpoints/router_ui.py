@@ -10,8 +10,9 @@ from openaiproxy.api.schema import (
     StatsResponse,
     TraceDetailResponse,
     TraceSummarySchema,
+    WebSearchSchema,
 )
-from openaiproxy.models.models import EndpointConfig, LLMProxyConfig
+from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebSearchConfig
 from openaiproxy.models.trace_models import TraceSummary
 from openaiproxy.services.config_service import ConfigService, ConfigValidationError
 from openaiproxy.services.trace_service import TraceService
@@ -44,6 +45,7 @@ def _endpoint_to_schema(endpoint: EndpointConfig) -> EndpointSchema:
         substitute_role=dict(endpoint.substitute_role or {}),
         log=endpoint.log,
         enabled=endpoint.enabled,
+        max_models=endpoint.max_models,
     )
 
 
@@ -57,6 +59,7 @@ def _schema_to_endpoint(schema: EndpointSchema) -> EndpointConfig:
         log=schema.log,
         substitute_role=dict(schema.substitute_role),
         enabled=schema.enabled,
+        max_models=schema.max_models,
     )
 
 
@@ -67,6 +70,15 @@ def _config_to_response(config: LLMProxyConfig) -> ConfigResponse:
         logs_dir=config.logs_dir,
         trace_dir=config.trace_dir,
         endpoints=[_endpoint_to_schema(endpoint) for endpoint in config.endpoints],
+        web_search=WebSearchSchema(
+            enabled=config.web_search.enabled,
+            base_url=config.web_search.base_url,
+            format=config.web_search.format,
+            extract=config.web_search.extract,
+            extract_mode=config.web_search.extract_mode,
+            limit=config.web_search.limit,
+            filter=config.web_search.filter,
+        ),
     )
 
 
@@ -101,6 +113,25 @@ def update_config(
     except ConfigValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _config_to_response(updated)
+
+
+@router.put("/config/web_search", response_model=ConfigResponse)
+def update_web_search_config(
+    payload: WebSearchSchema,
+    config_service: ConfigService = Depends(get_config_service),
+) -> ConfigResponse:
+    web_search = WebSearchConfig(
+        enabled=payload.enabled,
+        base_url=payload.base_url.strip().rstrip("/"),
+        format=payload.format,
+        extract=payload.extract,
+        extract_mode=payload.extract_mode,
+        limit=payload.limit,
+        filter=payload.filter,
+    )
+    if not web_search.base_url:
+        raise HTTPException(status_code=422, detail="Web search base_url is required")
+    return _config_to_response(config_service.update_web_search(web_search))
 
 
 @router.get("/config/resolve", response_model=RouteResolveResponse)

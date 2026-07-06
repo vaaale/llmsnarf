@@ -5,11 +5,26 @@ from pathlib import Path
 import yaml
 
 from openaiproxy.interface.repository import LLMProxyConfigRepository
-from openaiproxy.models.models import EndpointConfig, LLMProxyConfig
+from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebSearchConfig
 
 
 def _normalize_base_url(base_url: str) -> str:
     return base_url.rstrip("/")
+
+
+def _parse_web_search(raw: object) -> WebSearchConfig:
+    defaults = WebSearchConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    return WebSearchConfig(
+        enabled=bool(defaults.enabled if raw.get("enabled") is None else raw.get("enabled")),
+        base_url=_normalize_base_url(str(raw.get("base_url") or defaults.base_url)),
+        format=str(raw.get("format") or defaults.format),
+        extract=int(defaults.extract if raw.get("extract") is None else raw.get("extract")),
+        extract_mode=str(raw.get("extract_mode") or defaults.extract_mode),
+        limit=int(defaults.limit if raw.get("limit") is None else raw.get("limit")),
+        filter=bool(defaults.filter if raw.get("filter") is None else raw.get("filter")),
+    )
 
 
 class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
@@ -43,6 +58,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 aliases_raw = entry.get("aliases")
                 substitute_role_raw = entry.get("substitute_role")
                 enabled = entry.get("enabled")
+                max_models = entry.get("max_models")
 
                 if not base_url or not models:
                     continue
@@ -70,6 +86,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                         log=bool(True if log_enabled is None else log_enabled),
                         substitute_role=substitute_role,
                         enabled=bool(True if enabled is None else enabled),
+                        max_models=int(max_models) if max_models is not None else 0,
                     )
                 )
 
@@ -79,6 +96,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
             logs_dir=str(logs_dir) if logs_dir is not None else None,
             trace_dir=str(trace_dir) if trace_dir is not None else None,
             endpoints=endpoints,
+            web_search=_parse_web_search(llmproxy.get("web_search")),
         )
 
     def save(self, config: LLMProxyConfig) -> None:
@@ -96,6 +114,8 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 entry["aliases"] = dict(endpoint.aliases)
             if endpoint.substitute_role:
                 entry["substitute_role"] = dict(endpoint.substitute_role)
+            if endpoint.max_models > 0:
+                entry["max_models"] = endpoint.max_models
             endpoints[endpoint.name] = entry
 
         llmproxy: dict = {}
@@ -107,6 +127,15 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
             llmproxy["logs_dir"] = config.logs_dir
         if config.trace_dir is not None:
             llmproxy["trace_dir"] = config.trace_dir
+        llmproxy["web_search"] = {
+            "enabled": config.web_search.enabled,
+            "base_url": config.web_search.base_url,
+            "format": config.web_search.format,
+            "extract": config.web_search.extract,
+            "extract_mode": config.web_search.extract_mode,
+            "limit": config.web_search.limit,
+            "filter": config.web_search.filter,
+        }
         llmproxy["endpoints"] = endpoints
 
         tmp_path = self._config_path.with_suffix(".yaml.tmp")

@@ -1,40 +1,28 @@
 llmproxy:
-  host: "0.0.0.0"
+  host: 0.0.0.0
   port: 8000
-  logs_dir: "./logs"
-  trace_dir: "./traces"
-
+  logs_dir: ./logs
+  trace_dir: ./traces
+  web_search:
+    enabled: true
+    base_url: http://wingman.akhbar.lan:7000
+    format: markdown
+    extract: 3
+    extract_mode: auto
+    limit: 25
+    filter: false
   endpoints:
     default:
-      base_url: "http://wingman.akhbar.lan:8000/v1"
-      api_key: sk-123
-#      base_url: "https://alex-ai-demos-project-resource.openai.azure.com/openai/v1"
-#      api_key: "YOUR_AZURE_API_KEY_HERE"
-      models: [ '*' ]
-#      substitute_role:
-#        "developer": "system"
-#      aliases:
-#        "gpt-5.1": "gpt-oss-120b"
+      base_url: http://wingman.akhbar.lan:8000/v1
+      models:
+      - '*'
       log: true
-
+      enabled: true
+      api_key: sk-123
     openai:
-      base_url: "http://wingman.akhbar.lan:8000/v1"
-      api_key: sk-123
-      models: [ 'gpt-5.1' ]
+      base_url: http://wingman.akhbar.lan:8000/v1
+      models:
+      - gpt-5.1
       log: true
-
-#    localai:
-#      base_url: "http://wingman.akhbar.home:8000/v1"
-#      api_key: sk-123
-#      models: [ 'gpt-5.1' ]
-#      log: true
-#
-#    localai2:
-#      base_url: "http://wingman.akhbar.home:9000/v1"
-#      api_key: sk-321
-#      models: [ 'gpt-5.2','qwen3-coder' ]
-#      aliases:
-#        "gpt-5.2": "gpt-5.1"
-#        "opus-4.5": "qwen3-coder"
-#      log: true
-
+      enabled: true
+      api_key: sk-123

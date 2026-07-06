@@ -361,10 +361,51 @@ async function loadConfig() {
     document.getElementById("hdr-trace-dir").textContent = CONFIG.trace_dir || "./logs";
     document.getElementById("footer-info").textContent = `${CONFIG.host || "0.0.0.0"}:${CONFIG.port || 8000}`;
     renderConfigCards();
+    renderWebSearch();
   } catch (e) {
     toast("Failed to load config: " + e.message, true);
   }
 }
+
+function renderWebSearch() {
+  const ws = CONFIG.web_search || {};
+  document.getElementById("ws-enabled").classList.toggle("off", !ws.enabled);
+  document.getElementById("ws-url").value = ws.base_url || "";
+  document.getElementById("ws-format").value = ws.format || "markdown";
+  document.getElementById("ws-extract").value = ws.extract ?? 3;
+  document.getElementById("ws-extract-mode").value = ws.extract_mode || "auto";
+  document.getElementById("ws-limit").value = ws.limit ?? 25;
+  document.getElementById("ws-filter").classList.toggle("off", !ws.filter);
+  document.getElementById("ws-hint-url").textContent = (ws.base_url || "…") + "/mega/search";
+}
+
+document.getElementById("ws-enabled").onclick = function () { this.classList.toggle("off"); };
+document.getElementById("ws-filter").onclick = function () { this.classList.toggle("off"); };
+
+document.getElementById("ws-save-btn").onclick = async () => {
+  const baseUrl = document.getElementById("ws-url").value.trim();
+  if (!baseUrl) { toast("OpenSERP base URL is required", true); return; }
+  const extract = parseInt(document.getElementById("ws-extract").value, 10);
+  const limit = parseInt(document.getElementById("ws-limit").value, 10);
+  if (isNaN(extract) || extract < 0 || extract > 5) { toast("Extract must be between 0 and 5", true); return; }
+  if (isNaN(limit) || limit < 1 || limit > 100) { toast("Limit must be between 1 and 100", true); return; }
+  const payload = {
+    enabled: !document.getElementById("ws-enabled").classList.contains("off"),
+    base_url: baseUrl,
+    format: document.getElementById("ws-format").value,
+    extract,
+    extract_mode: document.getElementById("ws-extract-mode").value,
+    limit,
+    filter: !document.getElementById("ws-filter").classList.contains("off"),
+  };
+  try {
+    CONFIG = await apiPut("config/web_search", payload);
+    renderWebSearch();
+    toast("Saved llmproxy.yaml — web search settings active");
+  } catch (e) {
+    toast("Save failed: " + e.message, true);
+  }
+};
 
 function mapHtml(obj) {
   const entries = Object.entries(obj || {});
@@ -391,6 +432,7 @@ function renderConfigCards() {
         <div class="kv"><span class="k">Models</span><span class="v">${ep.models.map((m) => '<span class="tag model">' + esc(m) + "</span>").join(" ")}</span></div>
         <div class="kv"><span class="k">Aliases</span><span class="v">${mapHtml(ep.aliases)}</span></div>
         <div class="kv"><span class="k">Role subst.</span><span class="v">${mapHtml(ep.substitute_role)}</span></div>
+        <div class="kv"><span class="k">Max models</span><span class="v">${ep.max_models > 0 ? esc(ep.max_models) : '<span class="muted">unlimited</span>'}</span></div>
         <div class="kv"><span class="k">Trace log</span><span class="v"><span class="tag ${ep.log ? "ok" : "warn"}">${ep.log ? "enabled" : "off"}</span></span></div>
       </div>
     </div>`).join("") || '<div class="empty">No endpoints configured.</div>';
@@ -407,6 +449,7 @@ async function persistConfig() {
       substitute_role: ep.substitute_role || {},
       log: ep.log,
       enabled: ep.enabled,
+      max_models: ep.max_models || 0,
     })),
   };
   CONFIG = await apiPut("config", payload);
@@ -485,7 +528,7 @@ document.getElementById("fe-models-input").addEventListener("keydown", (e) => {
 function openEditor(i) {
   editingIndex = i;
   const ep = i === null
-    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true }
+    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true, max_models: 0 }
     : CONFIG.endpoints[i];
   document.getElementById("modal-title").textContent = i === null ? "Add endpoint" : "Edit endpoint — " + ep.name;
   document.getElementById("fe-name").value = ep.name;
@@ -497,6 +540,7 @@ function openEditor(i) {
     : `Current: ${ep.api_key_masked || "not set"}. Leave empty to keep it.`;
   document.getElementById("fe-enabled").classList.toggle("off", !ep.enabled);
   document.getElementById("fe-log").classList.toggle("off", !ep.log);
+  document.getElementById("fe-max-models").value = ep.max_models || 0;
   modelChips = [...ep.models];
   renderChips();
   document.getElementById("fe-aliases").innerHTML = "";
@@ -546,6 +590,7 @@ document.getElementById("modal-apply").onclick = async () => {
     substitute_role: collectMap("fe-roles"),
     log: !document.getElementById("fe-log").classList.contains("off"),
     enabled: !document.getElementById("fe-enabled").classList.contains("off"),
+    max_models: parseInt(document.getElementById("fe-max-models").value, 10) || 0,
   };
   if (editingIndex === null) CONFIG.endpoints.push(ep);
   else CONFIG.endpoints[editingIndex] = ep;

@@ -13,6 +13,7 @@ from fastapi import HTTPException
 
 from openaiproxy.interface.repository import LLMProxyConfigRepository
 from openaiproxy.models.models import EndpointConfig
+from openaiproxy.services.model_tracker_service import ModelTrackerService
 
 
 def extract_api_key(headers: dict[str, str]) -> str:
@@ -41,11 +42,51 @@ def filter_response_headers(headers: dict[str, str]) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in _RESPONSE_FRAMING_HEADERS}
 
 
+async def save_request_trace(trace_dir: Path, endpoint_path: str, payload: Any, headers: dict[str, str], api_key: str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    safe_api_key = sanitize_api_key_for_filename(api_key)
+    base_filename = f"{safe_api_key}_{timestamp}"
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    filename = trace_dir / f"{base_filename}_request.json"
+
+    data = {
+        "timestamp": datetime.now().isoformat(),
+        "endpoint": endpoint_path,
+        "headers": dict(headers),
+        "payload": payload,
+    }
+
+    def _write() -> None:
+        with open(filename, "w") as f:
+            json.dump(data, f, indent=2)
+
+    await anyio.to_thread.run_sync(_write)
+    return base_filename
+
+
+async def save_response_trace(trace_dir: Path, base_filename: str, response_data: dict[str, Any]) -> None:
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    filename = trace_dir / f"{base_filename}_response.json"
+
+    def _write() -> None:
+        with open(filename, "w") as f:
+            json.dump(response_data, f, indent=2)
+
+    await anyio.to_thread.run_sync(_write)
+
+
 class ProxyService:
-    def __init__(self, config_repository: LLMProxyConfigRepository, trace_dir: Path, logger: logging.Logger):
+    def __init__(
+        self,
+        config_repository: LLMProxyConfigRepository,
+        trace_dir: Path,
+        logger: logging.Logger,
+        model_tracker: ModelTrackerService,
+    ):
         self._config_repository = config_repository
         self._trace_dir = trace_dir
         self._logger = logger
+        self._model_tracker = model_tracker
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
         config = self._config_repository.load()
@@ -65,35 +106,10 @@ class ProxyService:
         return None
 
     async def _save_request(self, endpoint_path: str, payload: Any, headers: dict[str, str], api_key: str) -> str:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        safe_api_key = sanitize_api_key_for_filename(api_key)
-        base_filename = f"{safe_api_key}_{timestamp}"
-        self._trace_dir.mkdir(parents=True, exist_ok=True)
-        filename = self._trace_dir / f"{base_filename}_request.json"
-
-        data = {
-            "timestamp": datetime.now().isoformat(),
-            "endpoint": endpoint_path,
-            "headers": dict(headers),
-            "payload": payload,
-        }
-
-        def _write() -> None:
-            with open(filename, "w") as f:
-                json.dump(data, f, indent=2)
-
-        await anyio.to_thread.run_sync(_write)
-        return base_filename
+        return await save_request_trace(self._trace_dir, endpoint_path, payload, headers, api_key)
 
     async def _save_response(self, base_filename: str, response_data: dict[str, Any]) -> None:
-        self._trace_dir.mkdir(parents=True, exist_ok=True)
-        filename = self._trace_dir / f"{base_filename}_response.json"
-
-        def _write() -> None:
-            with open(filename, "w") as f:
-                json.dump(response_data, f, indent=2)
-
-        await anyio.to_thread.run_sync(_write)
+        await save_response_trace(self._trace_dir, base_filename, response_data)
 
     async def substitute_role(self, payload: dict, endpoint_config: EndpointConfig) -> dict:
         substitutions = endpoint_config.substitute_role
@@ -148,6 +164,9 @@ class ProxyService:
             )
 
         payload = await self.substitute_role(payload, selected_endpoint)
+
+        if forwarded_model is not None:
+            await self._model_tracker.ensure_capacity(selected_endpoint, str(forwarded_model))
 
         should_log = bool(selected_endpoint.log)
         api_key = extract_api_key(headers) if "authorization" in headers else (selected_endpoint.api_key or "unknown")

@@ -155,7 +155,8 @@
   .modal-foot { padding: 14px 22px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; }
   .field { margin-bottom: 16px; }
   .field label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
-  .field input[type=text], .field input[type=password] { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 9px 12px; font-size: 13px; outline: none; font-family: 'JetBrains Mono', monospace; }
+  .field input[type=text], .field input[type=password], .field input[type=number] { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 9px 12px; font-size: 13px; outline: none; font-family: 'JetBrains Mono', monospace; }
+  .ws-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 6px; }
   .field input:focus { border-color: var(--accent); }
   .field .hint { font-size: 11px; color: var(--muted); margin-top: 5px; }
   .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -319,6 +320,58 @@
         <button class="btn" id="cfg-reload-btn">⟳ Reload</button>
       </div>
       <div class="config-grid" id="config-grid"></div>
+      <div class="card" style="margin-top:20px">
+        <h3>Built-in tools — Web search (OpenSERP)</h3>
+        <div class="ws-grid">
+          <div class="field">
+            <label>Enabled</label>
+            <div class="switch-field" style="padding-top:6px">
+              <div class="toggle" id="ws-enabled"></div>
+              <span class="muted" style="font-size:13px">Expose web_search tool</span>
+            </div>
+          </div>
+          <div class="field" style="grid-column: span 3">
+            <label>OpenSERP base URL</label>
+            <input type="text" id="ws-url" placeholder="http://wingman.akhbar.lan:7000">
+          </div>
+          <div class="field">
+            <label>Result format</label>
+            <select class="filter" id="ws-format" style="width:100%">
+              <option value="markdown">markdown</option>
+              <option value="json">json</option>
+              <option value="text">text</option>
+              <option value="ndjson">ndjson</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Extract top N pages (0–5)</label>
+            <input type="number" id="ws-extract" min="0" max="5" step="1">
+          </div>
+          <div class="field">
+            <label>Extract mode</label>
+            <select class="filter" id="ws-extract-mode" style="width:100%">
+              <option value="auto">auto</option>
+              <option value="fast">fast</option>
+              <option value="rendered">rendered</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Result limit (1–100)</label>
+            <input type="number" id="ws-limit" min="1" max="100" step="1">
+          </div>
+          <div class="field">
+            <label>Duplicate filter</label>
+            <div class="switch-field" style="padding-top:6px">
+              <div class="toggle" id="ws-filter"></div>
+              <span class="muted" style="font-size:13px">Filter duplicate results</span>
+            </div>
+          </div>
+          <div class="field" style="align-self:end">
+            <button class="btn primary" id="ws-save-btn" style="width:100%">Save web search settings</button>
+          </div>
+        </div>
+        <div class="hint muted" style="font-size:11px">Used by the <code>web_search</code> built-in tool on <code>/v1/responses</code>. Queries <code class="mono" id="ws-hint-url">…/mega/search</code>.</div>
+      </div>
       <div class="card route-test">
         <h3>Routing tester — which endpoint handles a model?</h3>
         <div class="route-test-row">
@@ -377,6 +430,11 @@
         <label>Role substitutions (incoming role → replacement)</label>
         <div id="fe-roles"></div>
         <button class="add-row-btn" data-target="fe-roles">＋ Add substitution</button>
+      </div>
+      <div class="field">
+        <label>Max loaded models</label>
+        <input type="number" id="fe-max-models" step="1" placeholder="0">
+        <div class="hint">Maximum models kept loaded on this endpoint — the least recently used model is unloaded first. A value less than 1 disables the check.</div>
       </div>
       <div class="field">
         <label>Trace logging</label>

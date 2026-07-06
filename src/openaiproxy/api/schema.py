@@ -1,8 +1,18 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+
+class WebSearchSchema(BaseModel):
+    enabled: bool = True
+    base_url: str = "http://wingman.akhbar.lan:7000"
+    format: Literal["json", "markdown", "text", "ndjson"] = "markdown"
+    extract: int = Field(default=3, ge=0, le=5)
+    extract_mode: Literal["auto", "fast", "rendered"] = "auto"
+    limit: int = Field(default=25, ge=1, le=100)
+    filter: bool = False
 
 
 class EndpointSchema(BaseModel):
@@ -18,6 +28,7 @@ class EndpointSchema(BaseModel):
     substitute_role: dict[str, str] = Field(default_factory=dict)
     log: bool = True
     enabled: bool = True
+    max_models: int = Field(default=0, description="Max loaded models on the endpoint. Less than 1 disables tracking.")
 
 
 class ConfigResponse(BaseModel):
@@ -26,6 +37,7 @@ class ConfigResponse(BaseModel):
     logs_dir: str | None
     trace_dir: str | None
     endpoints: list[EndpointSchema]
+    web_search: WebSearchSchema = Field(default_factory=WebSearchSchema)
 
 
 class ConfigUpdateRequest(BaseModel):
