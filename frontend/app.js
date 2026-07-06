@@ -250,11 +250,14 @@ function renderConversation(d) {
   if (d.assembled_content) {
     html += `<div class="assembled-note">⚡ Streaming response — assistant message assembled from ${d.response_chunks.length} SSE chunks</div>`;
   }
-  html += messages.map((m) => {
+  html += messages.map((m, i) => {
     const role = esc(m.role || "unknown");
     return `<div class="msg ${role}">
-      <div class="msg-head">${role}</div>
-      <div class="msg-body">${esc(messageContentToText(m.content))}</div>
+      <div class="msg-head" onclick="toggleMessage(${i})">
+        <span class="msg-role">${role}</span>
+        <span class="msg-toggle" id="msg-toggle-${i}">▼</span>
+      </div>
+      <div class="msg-body" id="msg-body-${i}">${esc(messageContentToText(m.content))}</div>
     </div>`;
   }).join("");
 
@@ -264,18 +267,41 @@ function renderConversation(d) {
     assistant = choice?.message?.content || choice?.text || "";
   }
   if (assistant) {
+    const assistantIndex = messages.length; // Use unique index for assistant response
     html += `<div class="msg assistant">
-      <div class="msg-head">assistant <span class="subst-note">response</span></div>
-      <div class="msg-body">${esc(assistant)}</div>
+      <div class="msg-head" onclick="toggleMessage(${assistantIndex})">
+        <span class="msg-role">assistant <span class="subst-note">response</span></span>
+        <span class="msg-toggle" id="msg-toggle-${assistantIndex}">▼</span>
+      </div>
+      <div class="msg-body" id="msg-body-${assistantIndex}">${esc(assistant)}</div>
     </div>`;
   }
   if (d.summary.error) {
+    const errorIndex = messages.length + 1; // Use unique index for error
     html += `<div class="msg error">
-      <div class="msg-head">error</div>
-      <div class="msg-body">${esc(d.summary.error)}</div>
+      <div class="msg-head" onclick="toggleMessage(${errorIndex})">
+        <span class="msg-role">error</span>
+        <span class="msg-toggle" id="msg-toggle-${errorIndex}">▼</span>
+      </div>
+      <div class="msg-body" id="msg-body-${errorIndex}">${esc(d.summary.error)}</div>
     </div>`;
   }
   document.getElementById("pane-conv").innerHTML = html || '<div class="empty">No messages in payload.</div>';
+}
+
+function toggleMessage(index) {
+  const body = document.getElementById(`msg-body-${index}`);
+  const toggle = document.getElementById(`msg-toggle-${index}`);
+  
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    toggle.textContent = '▼';
+    toggle.style.transform = 'rotate(0deg)';
+  } else {
+    body.style.display = 'none';
+    toggle.textContent = '▶';
+    toggle.style.transform = 'rotate(0deg)';
+  }
 }
 
 document.querySelectorAll("#d-tabs .tab").forEach((tab) => {

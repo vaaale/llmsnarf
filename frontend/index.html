@@ -100,7 +100,10 @@
   .tab-pane.active { display: block; }
 
   .msg { margin-bottom: 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-  .msg-head { padding: 7px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; display: flex; align-items: center; gap: 8px; }
+  .msg-head { padding: 7px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .msg-head:hover { opacity: 0.8; }
+  .msg-role { flex: 1; }
+  .msg-toggle { font-size: 10px; transition: transform 0.2s ease; color: inherit; opacity: 0.7; }
   .msg-body { padding: 12px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; color: #d5dce6; word-break: break-word; }
   .msg.system .msg-head { background: rgba(210,153,34,.12); color: var(--yellow); }
   .msg.developer .msg-head { background: rgba(210,153,34,.12); color: var(--yellow); }
