@@ -6,17 +6,19 @@ llmproxy:
 
   endpoints:
     default:
-      base_url: "https://alex-ai-demos-project-resource.openai.azure.com/openai/v1"
-      api_key: "YOUR_AZURE_API_KEY_HERE"
+      base_url: "http://wingman.akhbar.lan:8000/v1"
+      api_key: sk-123
+#      base_url: "https://alex-ai-demos-project-resource.openai.azure.com/openai/v1"
+#      api_key: "YOUR_AZURE_API_KEY_HERE"
       models: [ '*' ]
-      substitute_role:
-        "developer": "system"
-      aliases:
-        "gpt-5.1": "gpt-oss-120b"
+#      substitute_role:
+#        "developer": "system"
+#      aliases:
+#        "gpt-5.1": "gpt-oss-120b"
       log: true
 
     openai:
-      base_url: "http://wingman.akhbar.home:8000/v1"
+      base_url: "http://wingman.akhbar.lan:8000/v1"
       api_key: sk-123
       models: [ 'gpt-5.1' ]
       log: true
