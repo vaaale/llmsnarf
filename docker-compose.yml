@@ -1,8 +1,13 @@
-services:8000
+services:
   llm-snarf:
     build: .
+    container_name: llmsnarf
+    hostname: llmsnarf
+#    image: alexakhbar/llmsnarf:latest
+    env_file:
+      - .env
     ports:
-      - "8080:8080"
+      - "${PORT}:8080"
     networks:
       - llmsnarf
     volumes:
@@ -13,9 +18,10 @@ services:8000
       - openserp
 
   openserp:
-    image: ghcr.io/karust/openserp:latest
+    image: karust/openserp:latest
+    command: serve -l
     ports:
-      - "7000:7000"
+      - "7001:7000"
     networks:
       - llmsnarf
     environment:

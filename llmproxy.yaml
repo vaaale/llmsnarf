@@ -5,7 +5,7 @@ llmproxy:
   trace_dir: ./traces
   web_search:
     enabled: true
-    base_url: http://wingman.akhbar.lan:7000
+    base_url: http://wingman.akhbar.lan:7001
     format: markdown
     extract: 5
     extract_mode: auto

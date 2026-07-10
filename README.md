@@ -82,7 +82,8 @@ services:
       - openserp
 
   openserp:
-    image: ghcr.io/karust/openserp:latest
+    image: karust/openserp:latest
+    command: serve -l
     ports:
       - "7000:7000"
     environment:
