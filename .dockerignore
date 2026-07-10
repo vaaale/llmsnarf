@@ -1,0 +1,46 @@
+# Version control
+.git/
+.gitignore
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime data (mounted at runtime, not baked into image)
+logs/
+traces/
+
+# Secrets
+.env
+
+# Tests
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Tooling
+.memsearch/

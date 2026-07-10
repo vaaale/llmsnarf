@@ -1,0 +1,36 @@
+llmproxy:
+  host: 0.0.0.0
+  port: 8080
+  logs_dir: ./logs
+  trace_dir: ./traces
+  web_search:
+    enabled: true
+    base_url: http://localhost:7000 # OpenSerp instance
+    format: markdown
+    extract: 5
+    extract_mode: auto
+    limit: 25
+    filter: false
+    mode: balanced  # any | fast | balanced
+    engines: []  # bing, google, yandex, baidu, duckduckgo, ecosia (empty = all)
+  web_fetch:
+    format: markdown  # json | markdown | text | ndjson
+    mode: auto  # auto | fast | rendered
+    min_runes: 0  # minimum character count for extracted content
+  endpoints:
+    openai:
+      base_url: https://otherhost/v1
+      models:
+      - gpt-5.6 # A request for gpt-5.6 will be forwarded to this endpoint
+      log: true
+      enabled: true
+      api_key: sk-123
+      max_models: 1 # Load / unload llama.cpp models. Only works with llama.cpp
+    default:
+      base_url: http://localhost:8000/v1 # LLM backend (llama.cpp, ollama, etc. with OpenAI-compatible API)
+      models:
+      - '*'
+      log: false
+      enabled: true
+      api_key: sk-123
+      max_models: 1 # Load / unload llama.cpp models. Only works with llama.cpp

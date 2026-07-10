@@ -1,0 +1,26 @@
+services:8000
+  llm-snarf:
+    build: .
+    ports:
+      - "8080:8080"
+    networks:
+      - llmsnarf
+    volumes:
+      - ./llmproxy.yaml:/app/llmproxy.yaml
+      - ./traces:/app/traces
+      - ./logs:/app/logs
+    depends_on:
+      - openserp
+
+  openserp:
+    image: ghcr.io/karust/openserp:latest
+    ports:
+      - "7000:7000"
+    networks:
+      - llmsnarf
+    environment:
+      - PORT=7000
+
+networks:
+  llmsnarf:
+    driver: bridge

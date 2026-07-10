@@ -1,8 +1,12 @@
 # Environment variables
 .env
 
-# Logs directory
+# Logs and runtime data
 logs/
+traces/
+
+# Memory search index
+.memsearch/
 
 # Python
 __pycache__/
