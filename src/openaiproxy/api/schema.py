@@ -13,6 +13,14 @@ class WebSearchSchema(BaseModel):
     extract_mode: Literal["auto", "fast", "rendered"] = "auto"
     limit: int = Field(default=25, ge=1, le=100)
     filter: bool = False
+    mode: Literal["any", "fast", "balanced"] = "balanced"
+    engines: list[str] = Field(default_factory=list)
+
+
+class WebFetchSchema(BaseModel):
+    format: Literal["json", "markdown", "text", "ndjson"] = "markdown"
+    mode: Literal["auto", "fast", "rendered"] = "auto"
+    min_runes: int = Field(default=0, ge=0)
 
 
 class EndpointSchema(BaseModel):
@@ -38,6 +46,7 @@ class ConfigResponse(BaseModel):
     trace_dir: str | None
     endpoints: list[EndpointSchema]
     web_search: WebSearchSchema = Field(default_factory=WebSearchSchema)
+    web_fetch: WebFetchSchema = Field(default_factory=WebFetchSchema)
 
 
 class ConfigUpdateRequest(BaseModel):

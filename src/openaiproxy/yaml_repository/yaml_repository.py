@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 from openaiproxy.interface.repository import LLMProxyConfigRepository
-from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebSearchConfig
+from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebFetchConfig, WebSearchConfig
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -16,6 +16,13 @@ def _parse_web_search(raw: object) -> WebSearchConfig:
     defaults = WebSearchConfig()
     if not isinstance(raw, dict):
         return defaults
+    raw_engines = raw.get("engines")
+    if isinstance(raw_engines, list):
+        engines = [str(e) for e in raw_engines]
+    elif isinstance(raw_engines, str) and raw_engines:
+        engines = [e.strip() for e in raw_engines.split(",") if e.strip()]
+    else:
+        engines = list(defaults.engines)
     return WebSearchConfig(
         enabled=bool(defaults.enabled if raw.get("enabled") is None else raw.get("enabled")),
         base_url=_normalize_base_url(str(raw.get("base_url") or defaults.base_url)),
@@ -24,6 +31,19 @@ def _parse_web_search(raw: object) -> WebSearchConfig:
         extract_mode=str(raw.get("extract_mode") or defaults.extract_mode),
         limit=int(defaults.limit if raw.get("limit") is None else raw.get("limit")),
         filter=bool(defaults.filter if raw.get("filter") is None else raw.get("filter")),
+        mode=str(raw.get("mode") or defaults.mode),
+        engines=engines,
+    )
+
+
+def _parse_web_fetch(raw: object) -> WebFetchConfig:
+    defaults = WebFetchConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    return WebFetchConfig(
+        format=str(raw.get("format") or defaults.format),
+        mode=str(raw.get("mode") or defaults.mode),
+        min_runes=int(defaults.min_runes if raw.get("min_runes") is None else raw.get("min_runes")),
     )
 
 
@@ -97,6 +117,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
             trace_dir=str(trace_dir) if trace_dir is not None else None,
             endpoints=endpoints,
             web_search=_parse_web_search(llmproxy.get("web_search")),
+            web_fetch=_parse_web_fetch(llmproxy.get("web_fetch")),
         )
 
     def save(self, config: LLMProxyConfig) -> None:
@@ -135,6 +156,13 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
             "extract_mode": config.web_search.extract_mode,
             "limit": config.web_search.limit,
             "filter": config.web_search.filter,
+            "mode": config.web_search.mode,
+            "engines": list(config.web_search.engines),
+        }
+        llmproxy["web_fetch"] = {
+            "format": config.web_fetch.format,
+            "mode": config.web_fetch.mode,
+            "min_runes": config.web_fetch.min_runes,
         }
         llmproxy["endpoints"] = endpoints
 

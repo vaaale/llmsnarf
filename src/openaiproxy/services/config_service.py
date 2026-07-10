@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from openaiproxy.interface.repository import LLMProxyConfigRepository
-from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebSearchConfig
+from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebFetchConfig, WebSearchConfig
 
 
 class ConfigValidationError(ValueError):
@@ -35,6 +35,12 @@ class ConfigService:
     def update_web_search(self, web_search: WebSearchConfig) -> LLMProxyConfig:
         current = self._config_repository.load()
         updated = replace(current, web_search=web_search)
+        self._config_repository.save(updated)
+        return updated
+
+    def update_web_fetch(self, web_fetch: WebFetchConfig) -> LLMProxyConfig:
+        current = self._config_repository.load()
+        updated = replace(current, web_fetch=web_fetch)
         self._config_repository.save(updated)
         return updated
 

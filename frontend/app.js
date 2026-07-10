@@ -362,6 +362,7 @@ async function loadConfig() {
     document.getElementById("footer-info").textContent = `${CONFIG.host || "0.0.0.0"}:${CONFIG.port || 8000}`;
     renderConfigCards();
     renderWebSearch();
+    renderWebFetch();
   } catch (e) {
     toast("Failed to load config: " + e.message, true);
   }
@@ -376,7 +377,20 @@ function renderWebSearch() {
   document.getElementById("ws-extract-mode").value = ws.extract_mode || "auto";
   document.getElementById("ws-limit").value = ws.limit ?? 25;
   document.getElementById("ws-filter").classList.toggle("off", !ws.filter);
-  document.getElementById("ws-hint-url").textContent = (ws.base_url || "…") + "/mega/search";
+  document.getElementById("ws-mode").value = ws.mode || "balanced";
+  const activeEngines = new Set(ws.engines || []);
+  document.querySelectorAll("#ws-engines-group input[type=checkbox]").forEach((cb) => {
+    cb.checked = activeEngines.has(cb.value);
+  });
+  const base = ws.base_url || "…";
+  document.getElementById("ws-hint-url").textContent = base + "/mega/search  ·  " + base + "/extract";
+}
+
+function renderWebFetch() {
+  const wf = CONFIG.web_fetch || {};
+  document.getElementById("wf-format").value = wf.format || "markdown";
+  document.getElementById("wf-mode").value = wf.mode || "auto";
+  document.getElementById("wf-min-runes").value = wf.min_runes ?? 0;
 }
 
 document.getElementById("ws-enabled").onclick = function () { this.classList.toggle("off"); };
@@ -389,6 +403,8 @@ document.getElementById("ws-save-btn").onclick = async () => {
   const limit = parseInt(document.getElementById("ws-limit").value, 10);
   if (isNaN(extract) || extract < 0 || extract > 5) { toast("Extract must be between 0 and 5", true); return; }
   if (isNaN(limit) || limit < 1 || limit > 100) { toast("Limit must be between 1 and 100", true); return; }
+  const engines = Array.from(document.querySelectorAll("#ws-engines-group input[type=checkbox]"))
+    .filter((cb) => cb.checked).map((cb) => cb.value);
   const payload = {
     enabled: !document.getElementById("ws-enabled").classList.contains("off"),
     base_url: baseUrl,
@@ -397,11 +413,31 @@ document.getElementById("ws-save-btn").onclick = async () => {
     extract_mode: document.getElementById("ws-extract-mode").value,
     limit,
     filter: !document.getElementById("ws-filter").classList.contains("off"),
+    mode: document.getElementById("ws-mode").value,
+    engines,
   };
   try {
     CONFIG = await apiPut("config/web_search", payload);
     renderWebSearch();
+    renderWebFetch();
     toast("Saved llmproxy.yaml — web search settings active");
+  } catch (e) {
+    toast("Save failed: " + e.message, true);
+  }
+};
+
+document.getElementById("wf-save-btn").onclick = async () => {
+  const minRunes = parseInt(document.getElementById("wf-min-runes").value, 10);
+  if (isNaN(minRunes) || minRunes < 0) { toast("Min runes must be 0 or greater", true); return; }
+  const payload = {
+    format: document.getElementById("wf-format").value,
+    mode: document.getElementById("wf-mode").value,
+    min_runes: minRunes,
+  };
+  try {
+    CONFIG = await apiPut("config/web_fetch", payload);
+    renderWebFetch();
+    toast("Saved llmproxy.yaml — web fetch settings active");
   } catch (e) {
     toast("Save failed: " + e.message, true);
   }

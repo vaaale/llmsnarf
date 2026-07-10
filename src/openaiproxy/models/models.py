@@ -25,6 +25,15 @@ class WebSearchConfig:
     extract_mode: str = "auto"  # auto | fast | rendered
     limit: int = 25  # 1-100
     filter: bool = False
+    mode: str = "balanced"  # any | fast | balanced
+    engines: list[str] = field(default_factory=list)  # bing, google, yandex, baidu, duckduckgo, ecosia
+
+
+@dataclass(frozen=True)
+class WebFetchConfig:
+    format: str = "markdown"  # json | markdown | text | ndjson
+    mode: str = "auto"  # auto | fast | rendered
+    min_runes: int = 0  # minimum character count for extracted content
 
 
 @dataclass(frozen=True)
@@ -35,3 +44,4 @@ class LLMProxyConfig:
     trace_dir: str | None
     endpoints: list[EndpointConfig]
     web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
+    web_fetch: WebFetchConfig = field(default_factory=WebFetchConfig)

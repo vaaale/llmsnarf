@@ -10,9 +10,10 @@ from openaiproxy.api.schema import (
     StatsResponse,
     TraceDetailResponse,
     TraceSummarySchema,
+    WebFetchSchema,
     WebSearchSchema,
 )
-from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebSearchConfig
+from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebFetchConfig, WebSearchConfig
 from openaiproxy.models.trace_models import TraceSummary
 from openaiproxy.services.config_service import ConfigService, ConfigValidationError
 from openaiproxy.services.trace_service import TraceService
@@ -78,6 +79,13 @@ def _config_to_response(config: LLMProxyConfig) -> ConfigResponse:
             extract_mode=config.web_search.extract_mode,
             limit=config.web_search.limit,
             filter=config.web_search.filter,
+            mode=config.web_search.mode,
+            engines=list(config.web_search.engines),
+        ),
+        web_fetch=WebFetchSchema(
+            format=config.web_fetch.format,
+            mode=config.web_fetch.mode,
+            min_runes=config.web_fetch.min_runes,
         ),
     )
 
@@ -128,10 +136,25 @@ def update_web_search_config(
         extract_mode=payload.extract_mode,
         limit=payload.limit,
         filter=payload.filter,
+        mode=payload.mode,
+        engines=list(payload.engines),
     )
     if not web_search.base_url:
         raise HTTPException(status_code=422, detail="Web search base_url is required")
     return _config_to_response(config_service.update_web_search(web_search))
+
+
+@router.put("/config/web_fetch", response_model=ConfigResponse)
+def update_web_fetch_config(
+    payload: WebFetchSchema,
+    config_service: ConfigService = Depends(get_config_service),
+) -> ConfigResponse:
+    web_fetch = WebFetchConfig(
+        format=payload.format,
+        mode=payload.mode,
+        min_runes=payload.min_runes,
+    )
+    return _config_to_response(config_service.update_web_fetch(web_fetch))
 
 
 @router.get("/config/resolve", response_model=RouteResolveResponse)
