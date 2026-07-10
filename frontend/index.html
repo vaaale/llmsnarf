@@ -222,6 +222,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Configuration
     </div>
+    <div class="nav-item" data-view="ledger">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Validation Ledger
+    </div>
   </nav>
   <div class="sidebar-footer">
     <div><span class="status-dot"></span>Proxy running</div>
@@ -327,6 +331,34 @@
         <span class="muted" style="font-size:12px" id="tail-count"></span>
       </div>
       <div class="card" style="padding:0; max-height: calc(100vh - 200px); overflow-y:auto" id="tail-box"></div>
+    </section>
+
+    <!-- LEDGER -->
+    <section class="view" id="view-ledger">
+      <div class="filter-bar">
+        <input class="search-input" placeholder="⌕ Filter by model…" id="ledger-model-filter" style="width:200px">
+        <button class="btn" id="ledger-refresh">⟳ Refresh</button>
+        <span class="muted" style="font-size:12px;margin-left:4px" id="ledger-count"></span>
+      </div>
+      <div class="traces-layout">
+        <div class="traces-list">
+          <div class="scroll">
+            <table>
+              <thead><tr><th>Time</th><th>Model</th><th>Endpoint</th><th>Issues</th></tr></thead>
+              <tbody id="ledger-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="detail" id="ledger-detail">
+          <div class="detail-header">
+            <div><b id="ledger-d-title">Select an entry</b></div>
+            <div class="detail-meta" id="ledger-d-meta"></div>
+          </div>
+          <div class="tab-body" style="padding:16px 18px">
+            <div id="ledger-d-body"><div class="empty">Select an entry from the list to inspect it.</div></div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- CONFIG -->

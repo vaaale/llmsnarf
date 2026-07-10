@@ -94,3 +94,18 @@ class StatsResponse(BaseModel):
     by_api_key: dict[str, int]
     requests_per_hour: list[int]
     errors_per_hour: list[int]
+
+
+class ValidationIssueSchema(BaseModel):
+    code: str
+    message: str
+    path: str
+
+
+class LedgerEntrySchema(BaseModel):
+    id: str
+    trace_id: str
+    timestamp: str
+    model: str | None
+    endpoint: str
+    issues: list[ValidationIssueSchema]

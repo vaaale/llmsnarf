@@ -63,7 +63,7 @@ function jsonHtml(obj) {
 }
 
 /* ───────── navigation ───────── */
-const titles = { dashboard: "Dashboard", traces: "Traces", live: "Live Tail", config: "Configuration" };
+const titles = { dashboard: "Dashboard", traces: "Traces", live: "Live Tail", config: "Configuration", ledger: "Validation Ledger" };
 document.querySelectorAll(".nav-item").forEach((item) => {
   item.onclick = () => switchView(item.dataset.view);
 });
@@ -76,6 +76,7 @@ function switchView(view) {
   if (view === "dashboard") loadDashboard();
   if (view === "traces") loadTraces();
   if (view === "config") loadConfig();
+  if (view === "ledger") loadLedger();
 }
 
 document.getElementById("refresh-btn").onclick = () => {
@@ -665,6 +666,112 @@ document.getElementById("route-btn").onclick = async () => {
     toast("Resolve failed: " + e.message, true);
   }
 };
+
+/* ───────── validation ledger ───────── */
+const ISSUE_CODE_LABELS = {
+  "response.unclosed_tag": { label: "Unclosed tag", cls: "warn" },
+  "response.tool_call.invalid_json": { label: "Invalid JSON args", cls: "err" },
+  "response.tool_call.args_not_object": { label: "Args not object", cls: "err" },
+  "response.tool_call.null_arg": { label: "Null arg", cls: "warn" },
+  "response.tool_call.autolink_arg": { label: "Autolink arg", cls: "warn" },
+  "response.tool_call.stringified_array": { label: "Stringified array", cls: "warn" },
+  "response.truncated": { label: "Truncated", cls: "warn" },
+  "request.missing_model": { label: "No model", cls: "err" },
+  "request.not_object": { label: "Bad request", cls: "err" },
+  "request.messages_not_array": { label: "Bad messages", cls: "err" },
+  "request.message_not_object": { label: "Bad message", cls: "err" },
+  "request.message_missing_role": { label: "Missing role", cls: "warn" },
+};
+
+function issueTag(code) {
+  const meta = ISSUE_CODE_LABELS[code] || { label: code, cls: "warn" };
+  return `<span class="tag ${meta.cls}" title="${esc(code)}">${esc(meta.label)}</span>`;
+}
+
+let ledgerEntries = [];
+let selectedLedgerEntryId = null;
+
+async function loadLedger() {
+  const modelFilter = document.getElementById("ledger-model-filter").value.trim();
+  const params = new URLSearchParams({ limit: "200" });
+  if (modelFilter) params.set("model", modelFilter);
+  try {
+    ledgerEntries = await apiGet("ledger?" + params.toString());
+    const count = ledgerEntries.length;
+    document.getElementById("ledger-count").textContent = count
+      ? count + " entr" + (count === 1 ? "y" : "ies") + " with issues"
+      : "No validation issues recorded yet";
+    document.getElementById("ledger-tbody").innerHTML = ledgerEntries.map((e) => {
+      const codes = [...new Set(e.issues.map((i) => i.code))];
+      return `<tr id="lrow-${esc(e.id)}" class="${e.id === selectedLedgerEntryId ? "selected" : ""}" onclick="selectLedgerEntry('${esc(e.id)}')">
+        <td class="mono muted">${fmtTime(e.timestamp)}</td>
+        <td><span class="tag model">${esc(e.model || "?")}</span></td>
+        <td class="mono muted">${esc(e.endpoint)}</td>
+        <td>${codes.map(issueTag).join(" ")}</td>
+      </tr>`;
+    }).join("") || '<tr><td colspan="4" class="empty">No entries</td></tr>';
+    if (selectedLedgerEntryId) {
+      const still = ledgerEntries.find((e) => e.id === selectedLedgerEntryId);
+      if (still) renderLedgerDetail(still);
+    }
+  } catch (ex) {
+    toast("Failed to load ledger: " + ex.message, true);
+  }
+}
+
+function selectLedgerEntry(id) {
+  selectedLedgerEntryId = id;
+  document.querySelectorAll("#ledger-tbody tr").forEach((r) => r.classList.remove("selected"));
+  const row = document.getElementById("lrow-" + id);
+  if (row) row.classList.add("selected");
+  const entry = ledgerEntries.find((e) => e.id === id);
+  if (entry) renderLedgerDetail(entry);
+}
+
+function renderLedgerDetail(entry) {
+  document.getElementById("ledger-d-title").textContent =
+    (entry.model || "?") + " · " + fmtTime(entry.timestamp);
+  document.getElementById("ledger-d-meta").innerHTML =
+    `<span class="tag model">${esc(entry.model || "?")}</span>` +
+    `<span class="tag route">${esc(entry.endpoint)}</span>` +
+    `<span class="tag sync" title="trace id">${esc(entry.trace_id)}</span>` +
+    `<button class="btn" style="padding:3px 10px;font-size:11px" onclick="openTraceFromLedger('${esc(entry.trace_id)}')">↗ Open trace</button>`;
+
+  const grouped = {};
+  for (const issue of entry.issues) {
+    (grouped[issue.code] = grouped[issue.code] || []).push(issue);
+  }
+  const html = Object.entries(grouped).map(([code, issues]) => {
+    const meta = ISSUE_CODE_LABELS[code] || { label: code, cls: "warn" };
+    const rows = issues.map((i) =>
+      `<div style="padding:6px 0;border-bottom:1px solid rgba(43,52,68,.4);font-size:12px;font-family:monospace">
+        ${i.path ? `<span style="color:var(--muted)">${esc(i.path)}</span><br>` : ""}
+        <span style="color:var(--text)">${esc(i.message)}</span>
+      </div>`
+    ).join("");
+    return `<div style="margin-bottom:16px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">
+        ${issueTag(code)} <span style="margin-left:6px">${esc(meta.label)}</span>
+      </div>
+      ${rows}
+    </div>`;
+  }).join("");
+
+  document.getElementById("ledger-d-body").innerHTML = html ||
+    '<div class="empty">No issues.</div>';
+}
+
+function openTraceFromLedger(traceId) {
+  switchView("traces");
+  selectTrace(traceId);
+}
+
+let ledgerSearchTimer = null;
+document.getElementById("ledger-model-filter").oninput = () => {
+  clearTimeout(ledgerSearchTimer);
+  ledgerSearchTimer = setTimeout(loadLedger, 300);
+};
+document.getElementById("ledger-refresh").onclick = loadLedger;
 
 /* ───────── init ───────── */
 loadConfig();

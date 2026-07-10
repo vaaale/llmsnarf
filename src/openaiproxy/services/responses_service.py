@@ -20,6 +20,7 @@ from openaiproxy.services.proxy_service import (
     save_request_trace,
     save_response_trace,
 )
+from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.web_search_service import (
     WEB_FETCH_TOOL_DEFINITION,
     WEB_FETCH_TOOL_NAME,
@@ -262,12 +263,14 @@ class ResponsesService:
         logger: logging.Logger,
         web_search_service: WebSearchService,
         model_tracker: ModelTrackerService,
+        ledger_service: LedgerService | None = None,
     ):
         self._config_repository = config_repository
         self._trace_dir = trace_dir
         self._logger = logger
         self._web_search_service = web_search_service
         self._model_tracker = model_tracker
+        self._ledger_service = ledger_service
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
         config = self._config_repository.load()
@@ -520,6 +523,15 @@ class ResponsesService:
                 "body": result,
             },
         )
+        if self._ledger_service and base_filename:
+            await self._ledger_service.validate_and_record(
+                trace_id=base_filename,
+                model=payload.get("model"),
+                endpoint="/responses",
+                request_payload=payload,
+                response_body=result,
+                response_chunks=[],
+            )
 
         return {
             "type": "response",
@@ -872,3 +884,12 @@ class ResponsesService:
                     "chunks": chunks_log,
                 },
             )
+            if self._ledger_service and base_filename:
+                await self._ledger_service.validate_and_record(
+                    trace_id=base_filename,
+                    model=payload.get("model"),
+                    endpoint="/responses",
+                    request_payload=payload,
+                    response_body=None,
+                    response_chunks=chunks_log,
+                )

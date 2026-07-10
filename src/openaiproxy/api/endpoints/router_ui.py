@@ -6,16 +6,19 @@ from openaiproxy.api.schema import (
     ConfigResponse,
     ConfigUpdateRequest,
     EndpointSchema,
+    LedgerEntrySchema,
     RouteResolveResponse,
     StatsResponse,
     TraceDetailResponse,
     TraceSummarySchema,
+    ValidationIssueSchema,
     WebFetchSchema,
     WebSearchSchema,
 )
 from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebFetchConfig, WebSearchConfig
 from openaiproxy.models.trace_models import TraceSummary
 from openaiproxy.services.config_service import ConfigService, ConfigValidationError
+from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.trace_service import TraceService
 
 router = APIRouter(prefix="/ui/api")
@@ -27,6 +30,10 @@ def get_config_service(request: Request) -> ConfigService:
 
 def get_trace_service(request: Request) -> TraceService:
     return request.app.state.trace_service
+
+
+def get_ledger_service(request: Request) -> LedgerService:
+    return request.app.state.ledger_service
 
 
 def _mask_api_key(api_key: str) -> str:
@@ -233,3 +240,37 @@ def get_stats(
     trace_service: TraceService = Depends(get_trace_service),
 ) -> StatsResponse:
     return StatsResponse(**trace_service.stats(hours=hours))
+
+
+def _entry_to_schema(entry) -> LedgerEntrySchema:
+    return LedgerEntrySchema(
+        id=entry.id,
+        trace_id=entry.trace_id,
+        timestamp=entry.timestamp,
+        model=entry.model,
+        endpoint=entry.endpoint,
+        issues=[ValidationIssueSchema(code=i.code, message=i.message, path=i.path) for i in entry.issues],
+    )
+
+
+@router.get("/ledger", response_model=list[LedgerEntrySchema])
+def list_ledger(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    model: str | None = None,
+    since: str | None = None,
+    ledger_service: LedgerService = Depends(get_ledger_service),
+) -> list[LedgerEntrySchema]:
+    entries = ledger_service.list_entries(limit=limit, offset=offset, model=model, since=since)
+    return [_entry_to_schema(e) for e in entries]
+
+
+@router.get("/ledger/{entry_id}", response_model=LedgerEntrySchema)
+def get_ledger_entry(
+    entry_id: str,
+    ledger_service: LedgerService = Depends(get_ledger_service),
+) -> LedgerEntrySchema:
+    entry = ledger_service.get_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Ledger entry not found")
+    return _entry_to_schema(entry)

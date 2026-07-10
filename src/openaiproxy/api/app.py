@@ -8,15 +8,18 @@ from fastapi.staticfiles import StaticFiles
 
 from openaiproxy.api.endpoints.router_main import router as main_router
 from openaiproxy.api.endpoints.router_ui import router as ui_router
+from openaiproxy.filesystem.fs_ledger_repository import FSLedgerRepository
 from openaiproxy.filesystem.fs_trace_repository import FSTraceRepository
 from openaiproxy.interface.repository import LLMProxyConfigRepository
 from openaiproxy.logging_config import configure_logging
 from openaiproxy.middleware.exception_logging import ExceptionLoggingMiddleware
 from openaiproxy.services.config_service import ConfigService
+from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.proxy_service import ProxyService
 from openaiproxy.services.responses_service import ResponsesService
 from openaiproxy.services.trace_service import TraceService
+from openaiproxy.services.validation_service import ValidationService
 from openaiproxy.services.web_search_service import WebSearchService
 
 
@@ -34,11 +37,18 @@ def create_app(
     
     model_tracker = ModelTrackerService(logger=logger)
     app.state.model_tracker = model_tracker
+    ledger_service = LedgerService(
+        ledger_repository=FSLedgerRepository(trace_dir=Path(trace_dir)),
+        validation_service=ValidationService(),
+        logger=logger,
+    )
+    app.state.ledger_service = ledger_service
     app.state.proxy_service = ProxyService(
         config_repository=config_repository,
         trace_dir=Path(trace_dir),
         logger=logger,
         model_tracker=model_tracker,
+        ledger_service=ledger_service,
     )
     web_search_service = WebSearchService(config_repository=config_repository, logger=logger)
     app.state.web_search_service = web_search_service
@@ -48,6 +58,7 @@ def create_app(
         logger=logger,
         web_search_service=web_search_service,
         model_tracker=model_tracker,
+        ledger_service=ledger_service,
     )
     app.state.config_service = ConfigService(config_repository=config_repository)
     app.state.trace_service = TraceService(trace_repository=FSTraceRepository(trace_dir=Path(trace_dir)))

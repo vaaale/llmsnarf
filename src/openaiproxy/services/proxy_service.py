@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from openaiproxy.interface.repository import LLMProxyConfigRepository
 from openaiproxy.models.models import EndpointConfig
 from openaiproxy.services.model_tracker_service import ModelTrackerService
+from openaiproxy.services.ledger_service import LedgerService
 
 
 def extract_api_key(headers: dict[str, str]) -> str:
@@ -82,11 +83,13 @@ class ProxyService:
         trace_dir: Path,
         logger: logging.Logger,
         model_tracker: ModelTrackerService,
+        ledger_service: LedgerService | None = None,
     ):
         self._config_repository = config_repository
         self._trace_dir = trace_dir
         self._logger = logger
         self._model_tracker = model_tracker
+        self._ledger_service = ledger_service
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
         config = self._config_repository.load()
@@ -223,6 +226,15 @@ class ProxyService:
 
                             if should_log:
                                 await self._save_response(base_filename, response_data)
+                            if self._ledger_service and base_filename:
+                                await self._ledger_service.validate_and_record(
+                                    trace_id=base_filename,
+                                    model=requested_model,
+                                    endpoint=endpoint_path,
+                                    request_payload=payload,
+                                    response_body=None,
+                                    response_chunks=response_data.get("chunks") or [],
+                                )
                     except Exception as e:
                         error_msg = f"data: {json.dumps({'error': str(e)})}\n\n"
                         response_data = {
@@ -258,6 +270,16 @@ class ProxyService:
                 }
                 if should_log:
                     await self._save_response(base_filename, response_data)
+                if self._ledger_service and base_filename:
+                    body_json = response_data.get("body") if isinstance(response_data.get("body"), dict) else None
+                    await self._ledger_service.validate_and_record(
+                        trace_id=base_filename,
+                        model=requested_model,
+                        endpoint=endpoint_path,
+                        request_payload=payload,
+                        response_body=body_json,
+                        response_chunks=[],
+                    )
 
                 return {
                     "type": "response",
