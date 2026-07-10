@@ -7,11 +7,13 @@ services:
     env_file:
       - .env
     ports:
-      - "${PORT}:8080"
+      - "${PORT}:${PORT}"
     networks:
       - llmsnarf
+    environment:
+      - LLMSNARF_CONFIG=/app/config
     volumes:
-      - ./llmproxy.yaml:/app/llmproxy.yaml
+      - ./config:/app/config
       - ./traces:/app/traces
       - ./logs:/app/logs
     depends_on:
@@ -19,9 +21,11 @@ services:
 
   openserp:
     image: karust/openserp:latest
+    container_name: openserp
+    hostname: openserp
     command: serve -l
     ports:
-      - "7001:7000"
+      - "7000:7000"
     networks:
       - llmsnarf
     environment:

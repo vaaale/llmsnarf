@@ -15,8 +15,9 @@ WEB_SEARCH_TOOL_DEFINITION = {
     "function": {
         "name": WEB_SEARCH_TOOL_NAME,
         "description": (
-            "Search the web for up-to-date information. "
-            "Returns search engine results, with page content extracted for the top results."
+            "Search the web using multiple search engines simultaneously. "
+            "Returns ranked results with titles, snippets, and URLs. "
+            "Optionally includes extracted page content for the top results."
         ),
         "parameters": {
             "type": "object",
@@ -36,15 +37,15 @@ WEB_FETCH_TOOL_DEFINITION = {
     "function": {
         "name": WEB_FETCH_TOOL_NAME,
         "description": (
-            "Fetch and extract the content of a URL. "
-            "Returns the page content in the configured format (markdown, text, or JSON)."
+            "Fetch and extract the full content of a single web page by URL. "
+            "Use this to read a specific page in full — for example after finding a relevant URL via web_search."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The URL to fetch and extract content from.",
+                    "description": "The full URL of the page to fetch.",
                 }
             },
             "required": ["url"],
@@ -105,8 +106,6 @@ class WebSearchService:
             "format": config.format,
             "mode": config.mode,
         }
-        if config.min_runes:
-            params["min_runes"] = config.min_runes
         endpoint_url = f"{search_config.base_url}/extract"
         self._logger.info("web_fetch url=%r endpoint=%s", url, endpoint_url)
         try:

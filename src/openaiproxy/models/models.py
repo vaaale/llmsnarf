@@ -33,7 +33,6 @@ class WebSearchConfig:
 class WebFetchConfig:
     format: str = "markdown"  # json | markdown | text | ndjson
     mode: str = "auto"  # auto | fast | rendered
-    min_runes: int = 0  # minimum character count for extracted content
 
 
 @dataclass(frozen=True)

@@ -44,3 +44,6 @@ htmlcov/
 
 # Tooling
 .memsearch/
+
+# Configuration
+config/

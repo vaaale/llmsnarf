@@ -391,7 +391,6 @@ function renderWebFetch() {
   const wf = CONFIG.web_fetch || {};
   document.getElementById("wf-format").value = wf.format || "markdown";
   document.getElementById("wf-mode").value = wf.mode || "auto";
-  document.getElementById("wf-min-runes").value = wf.min_runes ?? 0;
 }
 
 document.getElementById("ws-enabled").onclick = function () { this.classList.toggle("off"); };
@@ -428,12 +427,9 @@ document.getElementById("ws-save-btn").onclick = async () => {
 };
 
 document.getElementById("wf-save-btn").onclick = async () => {
-  const minRunes = parseInt(document.getElementById("wf-min-runes").value, 10);
-  if (isNaN(minRunes) || minRunes < 0) { toast("Min runes must be 0 or greater", true); return; }
   const payload = {
     format: document.getElementById("wf-format").value,
     mode: document.getElementById("wf-mode").value,
-    min_runes: minRunes,
   };
   try {
     CONFIG = await apiPut("config/web_fetch", payload);

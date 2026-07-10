@@ -92,7 +92,6 @@ def _config_to_response(config: LLMProxyConfig) -> ConfigResponse:
         web_fetch=WebFetchSchema(
             format=config.web_fetch.format,
             mode=config.web_fetch.mode,
-            min_runes=config.web_fetch.min_runes,
         ),
     )
 
@@ -159,7 +158,6 @@ def update_web_fetch_config(
     web_fetch = WebFetchConfig(
         format=payload.format,
         mode=payload.mode,
-        min_runes=payload.min_runes,
     )
     return _config_to_response(config_service.update_web_fetch(web_fetch))
 

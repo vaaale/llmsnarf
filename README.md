@@ -24,13 +24,13 @@ cd llmsnarf
 uv sync
 
 # 2. Create your config
-cp .env.example .env # supply OPENAI_API_KEY and optionally OPENAI_API_BASE
-cp llmproxy.yaml.example llmproxy.yaml   # or edit llmproxy.yaml directly
-(Configurable in the UI)
+cp .env.example .env          # optional — supply HOST/PORT overrides
+cd config
+cp llmproxy.yaml.example llmsnarf.yaml  # then edit to point at your backend
+# (Or configure endpoints via the UI after starting)
 ```
 
-Edit `llmproxy.yaml` to point at your LLM backend (see [Configuration](#configuration)).
-(Or use the UI at http://localhost:8080/ui)
+Edit `config/llmsnarf.yaml` to point at your LLM backend (see [Configuration](#configuration)), or use the UI at `http://localhost:8080/ui` after starting.
 
 ```bash
 # 3. Run
@@ -48,18 +48,17 @@ Point your client at `http://localhost:8080/v1` or `http://localhost:8080/v1/res
 A `Dockerfile` is included. Build and run:
 
 ```bash
-docker build -t llm-snarf .
+docker build -t llmsnarf .
 
 docker run -d \
   --name llmsnarf \
   -p 8080:8080 \
-  -v $(pwd)/llmproxy.yaml:/app/llmproxy.yaml \
-  -v $(pwd)/traces:/app/traces \
-  -v $(pwd)/logs:/app/logs \
+  -e LLMSNARF_CONFIG=/app/config \
+  -v $(pwd)/config:/app/config \
   alexakhbar/llmsnarf
 ```
 
-> Mount `llmproxy.yaml` so you can edit it without rebuilding. Mount `traces/` and `logs/` to persist data on the host.
+> Mount `./config` so you can edit `config/llmsnarf.yaml` without rebuilding. Traces and logs are written inside the container by default; add `-v $(pwd)/traces:/app/traces` and `-v $(pwd)/logs:/app/logs` if you want them on the host.
 
 ### OpenSerp (required for web search)
 
@@ -67,40 +66,21 @@ Web search and web fetch are powered by [OpenSerp](https://github.com/karust/ope
 
 Run OpenSerp alongside LLM Snarf using Docker Compose:
 
-```yaml
-# docker-compose.yml
-services:
-  llm-snarf:
-    build: .
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./llmproxy.yaml:/app/llmproxy.yaml
-      - ./traces:/app/traces
-      - ./logs:/app/logs
-    depends_on:
-      - openserp
-
-  openserp:
-    image: karust/openserp:latest
-    command: serve -l
-    ports:
-      - "7000:7000"
-    environment:
-      - PORT=7000
-```
-
-Then set `web_search.base_url: http://openserp:7000` in `llmproxy.yaml`.
+A `docker-compose.yml` is included. Just run:
 
 ```bash
 docker compose up -d
 ```
 
+The compose file mounts `./config` into the container and sets `LLMSNARF_CONFIG=/app/config`, so `config/llmsnarf.yaml` is picked up automatically. Port is read from `${PORT}` in your `.env` (default `8080`).
+
+Then set `web_search.base_url: http://openserp:7001` in `config/llmsnarf.yaml` to reach the OpenSerp sidecar.
+
 ---
 
 ## Configuration
 
-All configuration lives in `llmproxy.yaml`. Changes take effect immediately — no restart required (the config is reloaded on each request).
+All configuration lives in `config/llmsnarf.yaml`. Changes take effect immediately — no restart required (the config is reloaded on each request).
 
 ```yaml
 llmproxy:

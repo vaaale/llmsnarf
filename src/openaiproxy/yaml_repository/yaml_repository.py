@@ -43,7 +43,6 @@ def _parse_web_fetch(raw: object) -> WebFetchConfig:
     return WebFetchConfig(
         format=str(raw.get("format") or defaults.format),
         mode=str(raw.get("mode") or defaults.mode),
-        min_runes=int(defaults.min_runes if raw.get("min_runes") is None else raw.get("min_runes")),
     )
 
 
@@ -162,7 +161,6 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
         llmproxy["web_fetch"] = {
             "format": config.web_fetch.format,
             "mode": config.web_fetch.mode,
-            "min_runes": config.web_fetch.min_runes,
         }
         llmproxy["endpoints"] = endpoints
 

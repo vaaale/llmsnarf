@@ -5,6 +5,9 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_CONFIG_FILENAME = "llmsnarf.yaml"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -13,8 +16,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    llmproxy_config_path: Path = Field(
-        default=Path("./llmproxy.yaml"),
+    llmsnarf_config: Path = Field(
+        default=Path("./config"),
+        validation_alias=AliasChoices("LLMSNARF_CONFIG"),
+    )
+    llmproxy_config_path: Path | None = Field(
+        default=None,
         validation_alias=AliasChoices("LLMPROXY_CONFIG_PATH"),
     )
     logs_dir: Path | None = Field(default=None, validation_alias=AliasChoices("LOGS_DIR"))
@@ -23,3 +30,9 @@ class Settings(BaseSettings):
 
     host: str | None = Field(default=None, validation_alias=AliasChoices("HOST", "LISTEN_HOST"))
     port: int | None = Field(default=None, validation_alias=AliasChoices("PORT", "LISTEN_PORT"))
+
+    @property
+    def config_file_path(self) -> Path:
+        if self.llmproxy_config_path is not None:
+            return self.llmproxy_config_path
+        return self.llmsnarf_config / _CONFIG_FILENAME

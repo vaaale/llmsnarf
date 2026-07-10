@@ -20,7 +20,6 @@ class WebSearchSchema(BaseModel):
 class WebFetchSchema(BaseModel):
     format: Literal["json", "markdown", "text", "ndjson"] = "markdown"
     mode: Literal["auto", "fast", "rendered"] = "auto"
-    min_runes: int = Field(default=0, ge=0)
 
 
 class EndpointSchema(BaseModel):

@@ -5,7 +5,7 @@ from openaiproxy.yaml_repository.yaml_repository import YAMLLLMProxyConfigReposi
 
 settings = Settings()
 
-config_repository = YAMLLLMProxyConfigRepository(settings.llmproxy_config_path)
+config_repository = YAMLLLMProxyConfigRepository(settings.config_file_path)
 logs_dir, trace_dir = resolve_logs_trace_dirs(settings, config_repository)
 logs_dir.mkdir(parents=True, exist_ok=True)
 trace_dir.mkdir(parents=True, exist_ok=True)

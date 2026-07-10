@@ -46,3 +46,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Configuration
+config/llmsnarf.yaml
