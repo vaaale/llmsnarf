@@ -18,6 +18,7 @@ class WebSearchSchema(BaseModel):
 
 
 class WebFetchSchema(BaseModel):
+    base_url: str = "http://wingman.akhbar.lan:7000"
     format: Literal["json", "markdown", "text", "ndjson"] = "markdown"
     mode: Literal["auto", "fast", "rendered"] = "auto"
 

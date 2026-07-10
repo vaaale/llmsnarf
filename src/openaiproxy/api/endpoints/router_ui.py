@@ -90,6 +90,7 @@ def _config_to_response(config: LLMProxyConfig) -> ConfigResponse:
             engines=list(config.web_search.engines),
         ),
         web_fetch=WebFetchSchema(
+            base_url=config.web_fetch.base_url,
             format=config.web_fetch.format,
             mode=config.web_fetch.mode,
         ),
@@ -156,9 +157,12 @@ def update_web_fetch_config(
     config_service: ConfigService = Depends(get_config_service),
 ) -> ConfigResponse:
     web_fetch = WebFetchConfig(
+        base_url=payload.base_url.strip().rstrip("/"),
         format=payload.format,
         mode=payload.mode,
     )
+    if not web_fetch.base_url:
+        raise HTTPException(status_code=422, detail="Web fetch base_url is required")
     return _config_to_response(config_service.update_web_fetch(web_fetch))
 
 

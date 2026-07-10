@@ -100,13 +100,12 @@ class WebSearchService:
 
     async def fetch(self, url: str) -> str:
         config = self.get_fetch_config()
-        search_config = self.get_search_config()
         params: dict = {
             "url": url,
             "format": config.format,
             "mode": config.mode,
         }
-        endpoint_url = f"{search_config.base_url}/extract"
+        endpoint_url = f"{config.base_url}/extract"
         self._logger.info("web_fetch url=%r endpoint=%s", url, endpoint_url)
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:

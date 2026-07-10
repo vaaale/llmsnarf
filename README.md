@@ -135,22 +135,24 @@ If `api_key` is set on the endpoint, it overrides the client's `Authorization` h
 
 ### Web search
 
-```yaml
-web_search:
-  enabled: true
-  base_url: http://openserp:7000   # OpenSerp instance
-  format: markdown                  # markdown | json | text
-  extract: 5                        # number of pages to extract per search
-  extract_mode: auto                # auto | full
-  limit: 25                         # max search results
-  filter: false                     # safe search
-  mode: balanced                    # any | fast | balanced
-  engines: []                       # bing, google, duckduckgo, etc. (empty = all)
+`web_search` and `web_fetch` are two separate tools backed by [OpenSerp](https://github.com/karust/openserp), each with its own base URL (they can point at different OpenSerp instances/endpoints if needed).
 
-web_fetch:
-  format: markdown                  # markdown | json | text | ndjson
-  mode: auto                        # auto | fast | rendered
-  min_runes: 0                      # minimum content length to accept
+```yaml
+web_search:                          # -> GET {base_url}/mega/search
+  enabled: true
+  base_url: http://openserp:7000     # OpenSerp instance
+  format: markdown                   # json | markdown | text | ndjson
+  extract: 3                         # 0-5 top results to enrich with inline page content
+  extract_mode: auto                 # auto | fast | rendered
+  limit: 25                          # 1-100 max search results
+  filter: false                      # deduplicate results
+  mode: balanced                     # any | fast | balanced
+  engines: []                        # bing, google, yandex, baidu, duckduckgo, ecosia (empty = all)
+
+web_fetch:                           # -> GET {base_url}/extract
+  base_url: http://openserp:7000     # OpenSerp instance
+  format: markdown                   # json | markdown | text | ndjson
+  mode: auto                         # auto | fast | rendered
 ```
 
 When enabled, the proxy injects `web_search` and `web_fetch` tool definitions into every request. The model can invoke them and the proxy will execute the search/fetch transparently before returning the final response to the client.

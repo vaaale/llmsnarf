@@ -41,6 +41,7 @@ def _parse_web_fetch(raw: object) -> WebFetchConfig:
     if not isinstance(raw, dict):
         return defaults
     return WebFetchConfig(
+        base_url=_normalize_base_url(str(raw.get("base_url") or defaults.base_url)),
         format=str(raw.get("format") or defaults.format),
         mode=str(raw.get("mode") or defaults.mode),
     )
@@ -159,6 +160,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
             "engines": list(config.web_search.engines),
         }
         llmproxy["web_fetch"] = {
+            "base_url": config.web_fetch.base_url,
             "format": config.web_fetch.format,
             "mode": config.web_fetch.mode,
         }

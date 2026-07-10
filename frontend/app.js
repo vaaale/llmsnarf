@@ -384,13 +384,15 @@ function renderWebSearch() {
     cb.checked = activeEngines.has(cb.value);
   });
   const base = ws.base_url || "…";
-  document.getElementById("ws-hint-url").textContent = base + "/mega/search  ·  " + base + "/extract";
+  document.getElementById("ws-hint-url").textContent = base + "/mega/search";
 }
 
 function renderWebFetch() {
   const wf = CONFIG.web_fetch || {};
+  document.getElementById("wf-url").value = wf.base_url || "";
   document.getElementById("wf-format").value = wf.format || "markdown";
   document.getElementById("wf-mode").value = wf.mode || "auto";
+  document.getElementById("wf-hint-url").textContent = (wf.base_url || "…") + "/extract";
 }
 
 document.getElementById("ws-enabled").onclick = function () { this.classList.toggle("off"); };
@@ -427,7 +429,10 @@ document.getElementById("ws-save-btn").onclick = async () => {
 };
 
 document.getElementById("wf-save-btn").onclick = async () => {
+  const baseUrl = document.getElementById("wf-url").value.trim();
+  if (!baseUrl) { toast("Web fetch base URL is required", true); return; }
   const payload = {
+    base_url: baseUrl,
     format: document.getElementById("wf-format").value,
     mode: document.getElementById("wf-mode").value,
   };

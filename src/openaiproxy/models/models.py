@@ -31,6 +31,7 @@ class WebSearchConfig:
 
 @dataclass(frozen=True)
 class WebFetchConfig:
+    base_url: str = "http://wingman.akhbar.lan:7000"
     format: str = "markdown"  # json | markdown | text | ndjson
     mode: str = "auto"  # auto | fast | rendered
 

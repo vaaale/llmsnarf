@@ -381,15 +381,13 @@
             </div>
           </div>
         </div>
-        <div style="padding:16px 20px 14px; border-bottom:1px solid var(--border)">
-          <div class="field" style="margin-bottom:0">
-            <label>OpenSERP base URL</label>
-            <input type="text" id="ws-url" placeholder="http://localhost:7000" style="font-family:'JetBrains Mono',monospace">
-          </div>
-        </div>
         <div class="tool-sections">
           <div class="tool-section">
             <div class="tool-section-title"><code>web_search</code> — /mega/search</div>
+            <div class="field" style="margin-bottom:12px">
+              <label>Base URL</label>
+              <input type="text" id="ws-url" placeholder="http://localhost:7000" style="font-family:'JetBrains Mono',monospace">
+            </div>
             <div class="fields-row" style="margin-bottom:12px">
               <div class="field" style="margin-bottom:0">
                 <label>Result limit (1–100)</label>
@@ -422,7 +420,7 @@
                 </div>
               </div>
             </div>
-            <div class="field" style="margin-bottom:0">
+            <div class="field" style="margin-bottom:12px">
               <label>Engines <span class="muted" style="font-weight:400;font-size:11px">— empty = all</span></label>
               <div class="engine-checks" id="ws-engines-group">
                 <label class="engine-check"><input type="checkbox" value="google"><span class="engine-pill">Google</span></label>
@@ -433,10 +431,7 @@
                 <label class="engine-check"><input type="checkbox" value="ecosia"><span class="engine-pill">Ecosia</span></label>
               </div>
             </div>
-          </div>
-          <div class="tool-section">
-            <div class="tool-section-title"><code>web_search</code> — page extraction &amp; <code>web_fetch</code> — /extract</div>
-            <div class="fields-row-3" style="margin-bottom:12px">
+            <div class="fields-row" style="margin-bottom:0">
               <div class="field" style="margin-bottom:0">
                 <label>Extract top N (0–5)</label>
                 <input type="number" id="ws-extract" min="0" max="5" step="1">
@@ -450,9 +445,16 @@
                 </select>
               </div>
             </div>
+          </div>
+          <div class="tool-section">
+            <div class="tool-section-title"><code>web_fetch</code> — single page extraction (<code>/extract</code>)</div>
+            <div class="field" style="margin-bottom:12px">
+              <label>Base URL</label>
+              <input type="text" id="wf-url" placeholder="http://localhost:7000" style="font-family:'JetBrains Mono',monospace">
+            </div>
             <div class="fields-row" style="margin-bottom:0">
               <div class="field" style="margin-bottom:0">
-                <label>Fetch format</label>
+                <label>Format</label>
                 <select class="filter" id="wf-format" style="width:100%">
                   <option value="markdown">markdown</option>
                   <option value="json">json</option>
@@ -461,7 +463,7 @@
                 </select>
               </div>
               <div class="field" style="margin-bottom:0">
-                <label>Fetch mode</label>
+                <label>Mode</label>
                 <select class="filter" id="wf-mode" style="width:100%">
                   <option value="auto">auto</option>
                   <option value="fast">fast</option>
@@ -473,6 +475,7 @@
         </div>
         <div class="tool-card-footer">
           <span class="hint" id="ws-hint-url" style="font-family:'JetBrains Mono',monospace;font-size:11px"></span>
+          <span class="hint" id="wf-hint-url" style="font-family:'JetBrains Mono',monospace;font-size:11px"></span>
           <button class="btn" id="wf-save-btn">Save fetch settings</button>
           <button class="btn primary" id="ws-save-btn">Save search settings</button>
         </div>
