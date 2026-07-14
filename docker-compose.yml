@@ -3,7 +3,7 @@ services:
     build: .
     container_name: llmsnarf
     hostname: llmsnarf
-#    image: alexakhbar/llmsnarf:latest
+    image: alexakhbar/llmsnarf:latest
     env_file:
       - .env
     ports:
