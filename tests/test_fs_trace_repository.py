@@ -11,10 +11,11 @@ def _write_trace(
     status_code: int = 200,
     stream: bool = False,
     error: str | None = None,
+    endpoint: str = "/chat/completions",
 ) -> None:
     request = {
         "timestamp": "2026-07-06T11:18:32.127209",
-        "endpoint": "/chat/completions",
+        "endpoint": endpoint,
         "headers": {"authorization": "Bearer sk-test"},
         "payload": {
             "model": model,
@@ -66,6 +67,17 @@ def test_list_traces_filters(tmp_path: Path):
     assert len(repository.list_traces(status="5")) == 1
     assert len(repository.list_traces(status="error")) == 2
     assert len(repository.list_traces(query="gpt")) == 1
+
+
+def test_list_traces_excludes_models_endpoint(tmp_path: Path):
+    _write_trace(tmp_path, "sk-a_20260706_111832_000001")
+    _write_trace(tmp_path, "sk-a_20260706_111832_000002", endpoint="/models")
+
+    repository = FSTraceRepository(tmp_path)
+    traces = repository.list_traces()
+
+    assert len(traces) == 1
+    assert traces[0].id == "sk-a_20260706_111832_000001"
 
 
 def test_get_trace_detail(tmp_path: Path):

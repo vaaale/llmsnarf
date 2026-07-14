@@ -80,6 +80,8 @@ class FSLedgerRepository(LedgerRepository):
         all_entries = list(reversed(self._iter_entries()))
         filtered: list[LedgerEntry] = []
         for entry in all_entries:
+            if entry.endpoint == "/models":
+                continue
             if model and entry.model != model:
                 continue
             if since and entry.timestamp and entry.timestamp < since:

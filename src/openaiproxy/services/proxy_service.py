@@ -171,7 +171,7 @@ class ProxyService:
         if forwarded_model is not None:
             await self._model_tracker.ensure_capacity(selected_endpoint, str(forwarded_model))
 
-        should_log = bool(selected_endpoint.log)
+        should_log = bool(selected_endpoint.log) and endpoint_path != "/models"
         api_key = extract_api_key(headers) if "authorization" in headers else (selected_endpoint.api_key or "unknown")
         base_filename = await self._save_request(endpoint_path, payload, headers, api_key) if should_log else ""
 

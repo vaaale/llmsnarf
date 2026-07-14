@@ -25,8 +25,7 @@ def test_filter_response_headers_strips_framing_headers():
     }
 
 
-@pytest.fixture
-def client(tmp_path: Path, monkeypatch) -> TestClient:
+def _make_client(tmp_path: Path, monkeypatch, log: bool) -> TestClient:
     import httpx
 
     config_path = tmp_path / "llmproxy.yaml"
@@ -36,7 +35,7 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
         "    default:\n"
         "      base_url: http://upstream.test/v1\n"
         "      models: ['*']\n"
-        "      log: false\n"
+        f"      log: {str(log).lower()}\n"
     )
 
     def upstream_handler(request: httpx.Request) -> httpx.Response:
@@ -70,6 +69,11 @@ def client(tmp_path: Path, monkeypatch) -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture
+def client(tmp_path: Path, monkeypatch) -> TestClient:
+    return _make_client(tmp_path, monkeypatch, log=False)
+
+
 def test_non_streaming_response_has_consistent_framing(client: TestClient):
     response = client.post(
         "/v1/chat/completions",
@@ -83,3 +87,21 @@ def test_non_streaming_response_has_consistent_framing(client: TestClient):
     assert "content-encoding" not in response.headers
     assert response.headers["x-upstream"] == "llama.cpp"
     assert int(response.headers["content-length"]) == len(response.content)
+
+
+def test_models_endpoint_not_traced_or_ledgered(tmp_path: Path, monkeypatch):
+    client = _make_client(tmp_path, monkeypatch, log=True)
+    trace_dir = tmp_path / "traces"
+
+    response = client.get("/v1/models")
+    assert response.status_code == 200
+
+    assert not list(trace_dir.glob("*_request.json"))
+    assert not (trace_dir / "validation_ledger.ndjson").exists()
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-5.1", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 200
+    assert len(list(trace_dir.glob("*_request.json"))) == 1

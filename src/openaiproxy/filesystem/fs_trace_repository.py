@@ -117,6 +117,8 @@ class FSTraceRepository(TraceRepository):
             summary = self._build_summary(trace_id)
             if summary is None:
                 continue
+            if summary.endpoint == "/models":
+                continue
             if not self._matches(summary, model, api_key, status, since, query):
                 continue
             if skipped < offset:
