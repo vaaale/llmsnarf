@@ -338,8 +338,9 @@ function renderConversation(d) {
   }).join("");
 
   const responseParts = extractResponseParts(d);
-  for (const part of responseParts) {
-    const idx = messages.length + responseParts.indexOf(part);
+  for (let ri = 0; ri < responseParts.length; ri++) {
+    const part = responseParts[ri];
+    const idx = messages.length + ri;
     const role = esc(part.role || part.type || "assistant");
     html += `<div class="msg ${role}">
       <div class="msg-head" onclick="toggleMessage(${idx})">
