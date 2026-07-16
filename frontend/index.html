@@ -66,6 +66,11 @@
   tbody tr { cursor: pointer; transition: background .1s; }
   tbody tr:hover { background: var(--bg3); }
   tbody tr.selected { background: rgba(79,156,249,.1); box-shadow: inset 3px 0 0 var(--accent); }
+  tr.thread-header { cursor: pointer; background: rgba(79,156,249,.06); }
+  tr.thread-header:hover { background: rgba(79,156,249,.12); }
+  .thread-toggle { display: inline-block; width: 14px; font-size: 10px; color: var(--muted); margin-right: 6px; transition: transform .15s; }
+  .thread-child td { border-bottom: 1px solid rgba(43,52,68,.3); }
+  .thread-child:hover { background: var(--bg3); }
   .tag { display: inline-block; padding: 2px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; }
   .tag.ok { background: rgba(63,185,80,.15); color: var(--green); }
   .tag.err { background: rgba(248,81,73,.15); color: var(--red); }
@@ -140,6 +145,14 @@
   .tail-line .t { color: var(--muted); }
   .tail-line.new { animation: flash 1.2s ease-out; }
   @keyframes flash { 0% { background: rgba(79,156,249,.2); } 100% { background: transparent; } }
+
+  .tail-thread { border: 1px solid rgba(79,156,249,.2); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+  .tail-thread-header { padding: 8px 12px; background: rgba(79,156,249,.08); cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .tail-thread-header:hover { background: rgba(79,156,249,.14); }
+  .tail-thread-body { padding: 0; }
+  .tail-thread.collapsed .tail-thread-body { display: none; }
+  .tail-thread.collapsed .thread-toggle { transform: rotate(-90deg); }
+  .tail-nested { padding-left: 24px; }
 
   .ep-actions { display: flex; gap: 6px; margin-left: auto; align-items: center; }
   .icon-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); width: 28px; height: 28px; border-radius: 7px; cursor: pointer; font-size: 13px; display: grid; place-items: center; }

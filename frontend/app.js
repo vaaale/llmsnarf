@@ -175,19 +175,76 @@ async function loadTraces() {
   try {
     const traces = await apiGet("traces?" + params.toString());
     populateFilterOptions(traces);
-    document.getElementById("traces-tbody").innerHTML = traces.map((t) => `
-      <tr id="row-${esc(t.id)}" class="${t.id === selectedTraceId ? "selected" : ""}" onclick="selectTrace('${esc(t.id)}')">
-        <td class="mono muted">${fmtTime(t.timestamp)}</td>
+    document.getElementById("traces-tbody").innerHTML = renderGroupedTraces(traces);
+  } catch (e) {
+    toast("Failed to load traces: " + e.message, true);
+  }
+}
+
+function renderGroupedTraces(traces) {
+  if (!traces.length) return '<tr><td colspan="7" class="empty">No traces match</td></tr>';
+
+  const groups = [];
+  const groupMap = new Map();
+  for (const t of traces) {
+    const cid = t.correlation_id || null;
+    if (cid) {
+      if (!groupMap.has(cid)) {
+        const g = { cid, traces: [] };
+        groupMap.set(cid, g);
+        groups.push(g);
+      }
+      groupMap.get(cid).traces.push(t);
+    } else {
+      groups.push({ cid: null, traces: [t] });
+    }
+  }
+
+  return groups.map((g) => {
+    if (!g.cid) {
+      const t = g.traces[0];
+      return renderTraceRow(t, false);
+    }
+    const totalMsgs = g.traces.reduce((s, t) => s + (t.message_count || 0), 0);
+    const firstTime = g.traces[0].timestamp;
+    const short = g.cid.length > 16 ? g.cid.slice(0, 16) + "…" : g.cid;
+    const safeCid = esc(g.cid);
+    return `<tr class="thread-header" onclick="toggleThread('${safeCid}')">
+        <td class="mono muted">${fmtTime(firstTime)}</td>
+        <td colspan="5" style="font-weight:600">
+          <span class="thread-toggle" id="toggle-${safeCid}">▼</span>
+          <span class="tag route" title="${safeCid}">🧵 ${esc(short)}</span>
+          <span class="muted" style="font-size:11px">${g.traces.length} requests · ${totalMsgs} msgs</span>
+        </td>
+        <td></td>
+      </tr>` +
+      g.traces.map((t) => {
+        const row = renderTraceRow(t, true);
+        return row.replace('id="row-', `data-thread="${safeCid}" id="row-`);
+      }).join("");
+  }).join("");
+}
+
+function renderTraceRow(t, nested) {
+  const indent = nested ? 'padding-left:24px' : '';
+  return `<tr id="row-${esc(t.id)}" class="${t.id === selectedTraceId ? "selected" : ""}${nested ? " thread-child" : ""}" onclick="selectTrace('${esc(t.id)}')">
+        <td class="mono muted" style="${indent}">${fmtTime(t.timestamp)}</td>
         <td><span class="tag model">${esc(t.model || "?")}</span></td>
         <td>${typeTag(t)}</td>
         <td>${statusTag(t)}</td>
         <td class="muted">${t.message_count}</td>
         <td class="mono muted">${fmtDuration(t.duration_ms)}</td>
         <td>${threadTag(t)}</td>
-      </tr>`).join("") || '<tr><td colspan="7" class="empty">No traces match</td></tr>';
-  } catch (e) {
-    toast("Failed to load traces: " + e.message, true);
-  }
+      </tr>`;
+}
+
+function toggleThread(cid) {
+  const toggle = document.getElementById("toggle-" + cid);
+  const hidden = toggle && toggle.textContent === "▶";
+  document.querySelectorAll(`tr[data-thread="${cid}"]`).forEach((r) => {
+    r.style.display = hidden ? "" : "none";
+  });
+  if (toggle) toggle.textContent = hidden ? "▼" : "▶";
 }
 
 function populateFilterOptions(traces) {
@@ -337,6 +394,25 @@ let tailOn = true;
 let tailSeen = new Set();
 let tailCount = 0;
 
+function tailThreadKey(cid) { return cid ? "tail-thread-" + cid : null; }
+
+function ensureTailThread(box, cid) {
+  const key = tailThreadKey(cid);
+  if (!key) return box;
+  let el = document.getElementById(key);
+  if (el) return el;
+  el = document.createElement("div");
+  el.className = "tail-thread";
+  el.id = key;
+  const short = cid.length > 16 ? cid.slice(0, 16) + "…" : cid;
+  el.innerHTML = `<div class="tail-thread-header" onclick="this.parentElement.classList.toggle('collapsed')">
+    <span class="thread-toggle">▼</span>
+    <span class="tag route" title="${esc(cid)}">🧵 ${esc(short)}</span>
+  </div><div class="tail-thread-body"></div>`;
+  box.prepend(el);
+  return el.querySelector(".tail-thread-body");
+}
+
 async function pollTail() {
   if (!tailOn || !document.getElementById("view-live").classList.contains("active")) return;
   try {
@@ -345,14 +421,15 @@ async function pollTail() {
     for (const t of traces.reverse()) {
       if (tailSeen.has(t.id)) continue;
       tailSeen.add(t.id);
+      const container = ensureTailThread(box, t.correlation_id);
       const line = document.createElement("div");
-      line.className = "tail-line new";
+      line.className = "tail-line new" + (t.correlation_id ? " tail-nested" : "");
       line.onclick = () => openTraceFromDashboard(t.id);
       line.innerHTML = `<span class="t">${fmtTime(t.timestamp)}</span>
         ${statusTag(t)} <span class="tag model">${esc(t.model || "?")}</span>
         <span class="muted">${esc(t.endpoint)} · ${fmtDuration(t.duration_ms)} · ${t.message_count} msgs · ${esc(t.api_key)}</span>
         ${t.correlation_id ? `<span class="tag route" title="${esc(t.correlation_id)}">🧵 ${esc(t.correlation_id.length > 12 ? t.correlation_id.slice(0,12) + "…" : t.correlation_id)}</span>` : ""}`;
-      box.prepend(line);
+      container.prepend(line);
       tailCount++;
     }
     while (box.children.length > 100) box.lastChild.remove();
