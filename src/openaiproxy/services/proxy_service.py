@@ -153,8 +153,19 @@ class ProxyService:
         if not selected_endpoint:
             config = self._config_repository.load()
             if not config.endpoints:
+                self._logger.error(
+                    "proxy_no_routes_configured requested_model=%s endpoint_path=%s: no endpoints defined in config",
+                    requested_model,
+                    endpoint_path,
+                )
                 raise HTTPException(status_code=500, detail={"error": "No llmproxy routes configured"})
 
+            self._logger.warning(
+                "proxy_no_route_for_model requested_model=%s endpoint_path=%s available_endpoints=%s",
+                requested_model,
+                endpoint_path,
+                [e.name for e in config.endpoints],
+            )
             raise HTTPException(
                 status_code=404,
                 detail={
@@ -197,6 +208,13 @@ class ProxyService:
 
         target_url = f"{selected_endpoint.base_url}{endpoint_path}"
         is_streaming = isinstance(payload, dict) and payload.get("stream", False)
+        self._logger.debug(
+            "proxy_forward method=%s target_url=%s streaming=%s should_log=%s",
+            method,
+            target_url,
+            is_streaming,
+            should_log,
+        )
 
         if is_streaming:
             async def stream_response():
@@ -236,6 +254,12 @@ class ProxyService:
                                     response_chunks=response_data.get("chunks") or [],
                                 )
                     except Exception as e:
+                        self._logger.exception(
+                            "proxy_stream_error method=%s target_url=%s: %s",
+                            method,
+                            target_url,
+                            e,
+                        )
                         error_msg = f"data: {json.dumps({'error': str(e)})}\n\n"
                         response_data = {
                             "timestamp": datetime.now().isoformat(),
@@ -281,6 +305,14 @@ class ProxyService:
                         response_chunks=[],
                     )
 
+                if response.status_code >= 400:
+                    self._logger.warning(
+                        "proxy_upstream_error method=%s target_url=%s status=%s",
+                        method,
+                        target_url,
+                        response.status_code,
+                    )
+
                 return {
                     "type": "response",
                     "content": response.content,
@@ -288,6 +320,12 @@ class ProxyService:
                     "headers": filter_response_headers(dict(response.headers)),
                 }
             except Exception as e:
+                self._logger.exception(
+                    "proxy_request_error method=%s target_url=%s: %s",
+                    method,
+                    target_url,
+                    e,
+                )
                 response_data = {
                     "timestamp": datetime.now().isoformat(),
                     "error": str(e),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 
@@ -8,6 +10,8 @@ from openaiproxy.services.responses_service import ResponsesService
 
 
 router = APIRouter()
+
+logger = logging.getLogger("openaiproxy")
 
 
 def get_proxy_service(request: Request) -> ProxyService:
@@ -33,14 +37,25 @@ async def proxy_responses(request: Request, responses_service: ResponsesService 
     body = await request.body()
     headers = dict(request.headers)
 
+    logger.info(
+        "incoming_request method=%s path=/responses client=%s body_bytes=%d",
+        request.method,
+        request.client.host if request.client else "unknown",
+        len(body),
+    )
+
     result = await responses_service.handle(body=body, headers=headers)
 
     if result["type"] == "stream":
         return StreamingResponse(result["iterator"], media_type="text/event-stream")
 
+    status_code = result["status_code"]
+    if status_code >= 400:
+        logger.warning("response_status method=%s path=/responses status=%s", request.method, status_code)
+
     return Response(
         content=result["content"],
-        status_code=result["status_code"],
+        status_code=status_code,
         headers=result.get("headers"),
     )
 
@@ -57,6 +72,14 @@ async def proxy_request(request: Request, endpoint_path: str, proxy_service: Pro
     body = await request.body()
     headers = dict(request.headers)
 
+    logger.info(
+        "incoming_request method=%s path=%s client=%s body_bytes=%d",
+        request.method,
+        endpoint_path,
+        request.client.host if request.client else "unknown",
+        len(body),
+    )
+
     result = await proxy_service.proxy(
         method=request.method,
         endpoint_path=endpoint_path,
@@ -68,9 +91,15 @@ async def proxy_request(request: Request, endpoint_path: str, proxy_service: Pro
     if result["type"] == "stream":
         return StreamingResponse(result["iterator"], media_type="text/event-stream")
 
+    status_code = result["status_code"]
+    if status_code >= 400:
+        logger.warning("response_status method=%s path=%s status=%s", request.method, endpoint_path, status_code)
+    else:
+        logger.debug("response_status method=%s path=%s status=%s", request.method, endpoint_path, status_code)
+
     return Response(
         content=result["content"],
-        status_code=result["status_code"],
+        status_code=status_code,
         headers=result.get("headers"),
     )
 

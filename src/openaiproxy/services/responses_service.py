@@ -300,7 +300,16 @@ class ResponsesService:
         if not endpoint:
             config = self._config_repository.load()
             if not config.endpoints:
+                self._logger.error(
+                    "responses_no_routes_configured requested_model=%s: no endpoints defined in config",
+                    requested_model,
+                )
                 raise HTTPException(status_code=500, detail={"error": "No llmproxy routes configured"})
+            self._logger.warning(
+                "responses_no_route_for_model requested_model=%s available_endpoints=%s",
+                requested_model,
+                [e.name for e in config.endpoints],
+            )
             raise HTTPException(
                 status_code=404,
                 detail={
@@ -387,6 +396,9 @@ class ResponsesService:
                 try:
                     upstream = await client.post(chat_url, headers=forward_headers, json=chat_payload)
                 except Exception as exc:
+                    self._logger.exception(
+                        "responses_upstream_connect_error chat_url=%s: %s", chat_url, exc
+                    )
                     await self._trace_response(
                         should_log, base_filename, {"timestamp": datetime.now().isoformat(), "error": str(exc)}
                     )
@@ -398,6 +410,12 @@ class ResponsesService:
                     }
 
                 if upstream.status_code != 200:
+                    self._logger.warning(
+                        "responses_upstream_error chat_url=%s status=%s body=%s",
+                        chat_url,
+                        upstream.status_code,
+                        upstream.text[:500],
+                    )
                     await self._trace_response(
                         should_log,
                         base_filename,
@@ -658,6 +676,12 @@ class ResponsesService:
                     ) as upstream:
                         if upstream.status_code != 200:
                             error_body = (await upstream.aread()).decode("utf-8", errors="replace")
+                            self._logger.warning(
+                                "responses_stream_upstream_error chat_url=%s status=%s body=%s",
+                                chat_url,
+                                upstream.status_code,
+                                error_body[:500],
+                            )
                             snapshot["status"] = "failed"
                             snapshot["error"] = {"code": "upstream_error", "message": error_body[:2000]}
                             yield event("response.failed", {"response": snapshot})
