@@ -61,6 +61,8 @@ class FSTraceRepository(TraceRepository):
             message_count = len(messages)
         elif isinstance(payload.get("input"), list):
             message_count = len(payload["input"])
+        elif isinstance(payload.get("input"), str):
+            message_count = 1
         else:
             message_count = 0
 

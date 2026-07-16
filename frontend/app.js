@@ -367,6 +367,7 @@ function extractRequestMessages(payload) {
   if (!payload) return [];
   if (Array.isArray(payload.messages)) return payload.messages.map(normalizeMessage);
   if (Array.isArray(payload.input)) return payload.input.map(normalizeInputItem);
+  if (typeof payload.input === "string") return [{ role: "user", content: payload.input }];
   return [];
 }
 
@@ -411,6 +412,9 @@ function extractResponseParts(d) {
           parts.push({ type: "function_call", content: `call_id: ${item.call_id || ""}\nname: ${item.name || ""}\narguments: ${item.arguments || ""}` });
         } else if (item.type === "function_call_output") {
           parts.push({ type: "function_call_output", content: `call_id: ${item.call_id || ""}\noutput: ${item.output || ""}` });
+        } else if (item.type === "web_search_call") {
+          const query = item.action?.query || "";
+          parts.push({ type: "web_search", content: `query: ${query}`, note: "search" });
         }
       }
       assistant = null;
