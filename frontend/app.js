@@ -321,39 +321,37 @@ function messageContentToText(content) {
 
 function renderConversation(d) {
   const payload = d.request_payload;
-  const messages = payload && Array.isArray(payload.messages) ? payload.messages : [];
+  const messages = extractRequestMessages(payload);
   let html = "";
   if (d.assembled_content) {
     html += `<div class="assembled-note">⚡ Streaming response — assistant message assembled from ${d.response_chunks.length} SSE chunks</div>`;
   }
   html += messages.map((m, i) => {
-    const role = esc(m.role || "unknown");
+    const role = esc(m.role || m.type || "unknown");
     return `<div class="msg ${role}">
       <div class="msg-head" onclick="toggleMessage(${i})">
         <span class="msg-role">${role}</span>
         <span class="msg-toggle" id="msg-toggle-${i}">▼</span>
       </div>
-      <div class="msg-body" id="msg-body-${i}">${esc(messageContentToText(m.content))}</div>
+      <div class="msg-body" id="msg-body-${i}">${esc(m.content)}</div>
     </div>`;
   }).join("");
 
-  let assistant = d.assembled_content;
-  if (!assistant && d.response_body && Array.isArray(d.response_body.choices)) {
-    const choice = d.response_body.choices[0];
-    assistant = choice?.message?.content || choice?.text || "";
-  }
-  if (assistant) {
-    const assistantIndex = messages.length; // Use unique index for assistant response
-    html += `<div class="msg assistant">
-      <div class="msg-head" onclick="toggleMessage(${assistantIndex})">
-        <span class="msg-role">assistant <span class="subst-note">response</span></span>
-        <span class="msg-toggle" id="msg-toggle-${assistantIndex}">▼</span>
+  const responseParts = extractResponseParts(d);
+  for (const part of responseParts) {
+    const idx = messages.length + responseParts.indexOf(part);
+    const role = esc(part.role || part.type || "assistant");
+    html += `<div class="msg ${role}">
+      <div class="msg-head" onclick="toggleMessage(${idx})">
+        <span class="msg-role">${role}${part.note ? ` <span class="subst-note">${part.note}</span>` : ""}</span>
+        <span class="msg-toggle" id="msg-toggle-${idx}">▼</span>
       </div>
-      <div class="msg-body" id="msg-body-${assistantIndex}">${esc(assistant)}</div>
+      <div class="msg-body" id="msg-body-${idx}">${esc(part.content)}</div>
     </div>`;
   }
+
   if (d.summary.error) {
-    const errorIndex = messages.length + 1; // Use unique index for error
+    const errorIndex = messages.length + responseParts.length + 1;
     html += `<div class="msg error">
       <div class="msg-head" onclick="toggleMessage(${errorIndex})">
         <span class="msg-role">error</span>
@@ -363,6 +361,63 @@ function renderConversation(d) {
     </div>`;
   }
   document.getElementById("pane-conv").innerHTML = html || '<div class="empty">No messages in payload.</div>';
+}
+
+function extractRequestMessages(payload) {
+  if (!payload) return [];
+  if (Array.isArray(payload.messages)) return payload.messages.map(normalizeMessage);
+  if (Array.isArray(payload.input)) return payload.input.map(normalizeInputItem);
+  return [];
+}
+
+function normalizeMessage(m) {
+  return { role: m.role, content: messageContentToText(m.content) };
+}
+
+function normalizeInputItem(item) {
+  if (item.role) {
+    return { role: item.role, content: messageContentToText(item.content) };
+  }
+  if (item.type === "function_call") {
+    return { type: "function_call", content: `call_id: ${item.call_id || ""}\nname: ${item.name || ""}\narguments: ${item.arguments || ""}` };
+  }
+  if (item.type === "function_call_output") {
+    return { type: "function_call_output", content: `call_id: ${item.call_id || ""}\noutput: ${item.output || ""}` };
+  }
+  return { type: item.type || "unknown", content: JSON.stringify(item, null, 2) };
+}
+
+function extractResponseParts(d) {
+  const parts = [];
+  let assistant = d.assembled_content;
+  if (!assistant && d.response_body) {
+    if (Array.isArray(d.response_body.choices)) {
+      const choice = d.response_body.choices[0];
+      assistant = choice?.message?.content || choice?.text || "";
+    } else if (Array.isArray(d.response_body.output)) {
+      for (const item of d.response_body.output) {
+        if (item.type === "message" && Array.isArray(item.content)) {
+          const text = item.content
+            .filter((c) => c.type === "output_text" || c.type === "text")
+            .map((c) => c.text)
+            .join("\n");
+          if (text) parts.push({ role: item.role || "assistant", content: text, note: "response" });
+        } else if (item.type === "reasoning") {
+          const text = Array.isArray(item.summary)
+            ? item.summary.map((s) => s.text || "").join("\n")
+            : (item.summary || "");
+          if (text) parts.push({ type: "reasoning", content: text, note: "thinking" });
+        } else if (item.type === "function_call") {
+          parts.push({ type: "function_call", content: `call_id: ${item.call_id || ""}\nname: ${item.name || ""}\narguments: ${item.arguments || ""}` });
+        } else if (item.type === "function_call_output") {
+          parts.push({ type: "function_call_output", content: `call_id: ${item.call_id || ""}\noutput: ${item.output || ""}` });
+        }
+      }
+      assistant = null;
+    }
+  }
+  if (assistant) parts.push({ role: "assistant", content: assistant, note: "response" });
+  return parts;
 }
 
 function toggleMessage(index) {

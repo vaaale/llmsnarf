@@ -57,7 +57,12 @@ class FSTraceRepository(TraceRepository):
         payload = request_data.get("payload")
         payload = payload if isinstance(payload, dict) else {}
         messages = payload.get("messages")
-        message_count = len(messages) if isinstance(messages, list) else 0
+        if isinstance(messages, list):
+            message_count = len(messages)
+        elif isinstance(payload.get("input"), list):
+            message_count = len(payload["input"])
+        else:
+            message_count = 0
 
         duration_ms: float | None = None
         request_ts = _parse_timestamp(request_data.get("timestamp"))
