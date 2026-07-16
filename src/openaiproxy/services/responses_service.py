@@ -401,7 +401,7 @@ class ResponsesService:
         status = "completed"
         incomplete_reason: str | None = None
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=3000.0) as client:
             for _ in range(MAX_TOOL_ITERATIONS):
                 try:
                     upstream = await client.post(chat_url, headers=forward_headers, json=chat_payload)
