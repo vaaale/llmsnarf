@@ -149,8 +149,21 @@ function openTraceFromDashboard(id) {
 }
 
 /* ───────── traces ───────── */
-let traceFilters = { q: "", model: "", api_key: "", status: "" };
+let traceFilters = { q: "", model: "", api_key: "", status: "", correlation_id: "" };
 let selectedTraceId = null;
+
+function threadTag(t) {
+  if (!t.correlation_id) return '<span class="muted" style="font-size:11px">–</span>';
+  const short = t.correlation_id.length > 12 ? t.correlation_id.slice(0, 12) + "…" : t.correlation_id;
+  return `<span class="tag route" title="${esc(t.correlation_id)}" onclick="filterByThread('${esc(t.correlation_id)}');event.stopPropagation();">🧵 ${esc(short)}</span>`;
+}
+
+function filterByThread(cid) {
+  traceFilters.correlation_id = cid;
+  const sel = document.getElementById("f-correlation");
+  sel.value = cid;
+  loadTraces();
+}
 
 async function loadTraces() {
   const params = new URLSearchParams({ limit: "200" });
@@ -158,6 +171,7 @@ async function loadTraces() {
   if (traceFilters.model) params.set("model", traceFilters.model);
   if (traceFilters.api_key) params.set("api_key", traceFilters.api_key);
   if (traceFilters.status) params.set("status", traceFilters.status);
+  if (traceFilters.correlation_id) params.set("correlation_id", traceFilters.correlation_id);
   try {
     const traces = await apiGet("traces?" + params.toString());
     populateFilterOptions(traces);
@@ -169,7 +183,8 @@ async function loadTraces() {
         <td>${statusTag(t)}</td>
         <td class="muted">${t.message_count}</td>
         <td class="mono muted">${fmtDuration(t.duration_ms)}</td>
-      </tr>`).join("") || '<tr><td colspan="6" class="empty">No traces match</td></tr>';
+        <td>${threadTag(t)}</td>
+      </tr>`).join("") || '<tr><td colspan="7" class="empty">No traces match</td></tr>';
   } catch (e) {
     toast("Failed to load traces: " + e.message, true);
   }
@@ -184,6 +199,7 @@ function populateFilterOptions(traces) {
   };
   fill("f-model", traces.map((t) => t.model).filter(Boolean), traceFilters.model);
   fill("f-apikey", traces.map((t) => t.api_key).filter(Boolean), traceFilters.api_key);
+  fill("f-correlation", traces.map((t) => t.correlation_id).filter(Boolean), traceFilters.correlation_id);
 }
 
 let searchTimer = null;
@@ -194,6 +210,7 @@ document.getElementById("trace-search").oninput = (e) => {
 document.getElementById("f-model").onchange = (e) => { traceFilters.model = e.target.value; loadTraces(); };
 document.getElementById("f-apikey").onchange = (e) => { traceFilters.api_key = e.target.value; loadTraces(); };
 document.getElementById("f-status").onchange = (e) => { traceFilters.status = e.target.value; loadTraces(); };
+document.getElementById("f-correlation").onchange = (e) => { traceFilters.correlation_id = e.target.value; loadTraces(); };
 document.getElementById("trace-refresh").onclick = loadTraces;
 
 async function selectTrace(id) {
@@ -217,7 +234,8 @@ async function selectTrace(id) {
     ${typeTag(s)} ${statusTag(s)}
     <span class="tag sync">key: ${esc(s.api_key)}</span>
     <span class="tag sync">${fmtDuration(s.duration_ms)}</span>
-    <span class="tag route">${esc(s.endpoint)}</span>`;
+    <span class="tag route">${esc(s.endpoint)}</span>
+    ${s.correlation_id ? `<span class="tag route" title="${esc(s.correlation_id)}">🧵 ${esc(s.correlation_id.length > 16 ? s.correlation_id.slice(0,16) + "…" : s.correlation_id)}</span>` : ""}`;
 
   renderConversation(d);
   document.getElementById("pane-req").innerHTML =
@@ -332,7 +350,8 @@ async function pollTail() {
       line.onclick = () => openTraceFromDashboard(t.id);
       line.innerHTML = `<span class="t">${fmtTime(t.timestamp)}</span>
         ${statusTag(t)} <span class="tag model">${esc(t.model || "?")}</span>
-        <span class="muted">${esc(t.endpoint)} · ${fmtDuration(t.duration_ms)} · ${t.message_count} msgs · ${esc(t.api_key)}</span>`;
+        <span class="muted">${esc(t.endpoint)} · ${fmtDuration(t.duration_ms)} · ${t.message_count} msgs · ${esc(t.api_key)}</span>
+        ${t.correlation_id ? `<span class="tag route" title="${esc(t.correlation_id)}">🧵 ${esc(t.correlation_id.length > 12 ? t.correlation_id.slice(0,12) + "…" : t.correlation_id)}</span>` : ""}`;
       box.prepend(line);
       tailCount++;
     }

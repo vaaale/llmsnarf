@@ -287,13 +287,14 @@
           <option value="5">5xx</option>
           <option value="error">Errors</option>
         </select>
+        <select class="filter" id="f-correlation"><option value="">All threads</option></select>
         <button class="btn" id="trace-refresh">⟳</button>
       </div>
       <div class="traces-layout">
         <div class="traces-list">
           <div class="scroll">
             <table>
-              <thead><tr><th>Time</th><th>Model</th><th>Type</th><th>Status</th><th>Msgs</th><th>Dur.</th></tr></thead>
+              <thead><tr><th>Time</th><th>Model</th><th>Type</th><th>Status</th><th>Msgs</th><th>Dur.</th><th>Thread</th></tr></thead>
               <tbody id="traces-tbody"></tbody>
             </table>
           </div>

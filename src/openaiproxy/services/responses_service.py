@@ -16,6 +16,7 @@ from openaiproxy.models.models import EndpointConfig
 from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.proxy_service import (
     extract_api_key,
+    extract_correlation_id,
     filter_response_headers,
     save_request_trace,
     save_response_trace,
@@ -296,6 +297,7 @@ class ResponsesService:
             raise HTTPException(status_code=400, detail={"error": "Request body must be a JSON object"})
 
         requested_model = payload.get("model")
+        correlation_id = extract_correlation_id(headers)
         endpoint = self._select_endpoint_for_model(requested_model)
         if not endpoint:
             config = self._config_repository.load()
@@ -333,12 +335,13 @@ class ResponsesService:
                 message["role"] = substitutions[message["role"]]
 
         self._logger.info(
-            "responses_route requested_model=%s forwarded_model=%s endpoint=%s web_search=%s stream=%s",
+            "responses_route requested_model=%s forwarded_model=%s endpoint=%s web_search=%s stream=%s correlation_id=%s",
             requested_model,
             forwarded_model,
             endpoint.name,
             web_search_active,
             bool(payload.get("stream")),
+            correlation_id,
         )
 
         if forwarded_model is not None:
@@ -347,7 +350,9 @@ class ResponsesService:
         should_log = bool(endpoint.log)
         api_key = extract_api_key(headers) if "authorization" in headers else (endpoint.api_key or "unknown")
         base_filename = (
-            await save_request_trace(self._trace_dir, "/responses", payload, headers, api_key) if should_log else ""
+            await save_request_trace(self._trace_dir, "/responses", payload, headers, api_key, correlation_id)
+            if should_log
+            else ""
         )
 
         forward_headers = {"Content-Type": "application/json"}
@@ -362,17 +367,21 @@ class ResponsesService:
             return {
                 "type": "stream",
                 "iterator": self._stream(
-                    payload, chat_payload, chat_url, forward_headers, web_search_active, should_log, base_filename
+                    payload, chat_payload, chat_url, forward_headers, web_search_active,
+                    should_log, base_filename, correlation_id,
                 ),
             }
 
         return await self._complete(
-            payload, chat_payload, chat_url, forward_headers, web_search_active, should_log, base_filename
+            payload, chat_payload, chat_url, forward_headers, web_search_active,
+            should_log, base_filename, correlation_id,
         )
 
-    async def _trace_response(self, should_log: bool, base_filename: str, response_data: dict) -> None:
+    async def _trace_response(
+        self, should_log: bool, base_filename: str, response_data: dict, correlation_id: str | None = None
+    ) -> None:
         if should_log:
-            await save_response_trace(self._trace_dir, base_filename, response_data)
+            await save_response_trace(self._trace_dir, base_filename, response_data, correlation_id)
 
     async def _complete(
         self,
@@ -383,6 +392,7 @@ class ResponsesService:
         web_search_active: bool,
         should_log: bool,
         base_filename: str,
+        correlation_id: str | None = None,
     ) -> dict:
         response_id = _new_id("resp")
         result = _base_response(payload, response_id, str(payload.get("model") or chat_payload["model"]))
@@ -400,7 +410,8 @@ class ResponsesService:
                         "responses_upstream_connect_error chat_url=%s: %s", chat_url, exc
                     )
                     await self._trace_response(
-                        should_log, base_filename, {"timestamp": datetime.now().isoformat(), "error": str(exc)}
+                        should_log, base_filename, {"timestamp": datetime.now().isoformat(), "error": str(exc)},
+                        correlation_id,
                     )
                     return {
                         "type": "response",
@@ -425,6 +436,7 @@ class ResponsesService:
                             "headers": dict(upstream.headers),
                             "body": upstream.text,
                         },
+                        correlation_id,
                     )
                     return {
                         "type": "response",
@@ -540,6 +552,7 @@ class ResponsesService:
                 "headers": {"content-type": "application/json"},
                 "body": result,
             },
+            correlation_id,
         )
         if self._ledger_service and base_filename:
             await self._ledger_service.validate_and_record(
@@ -567,6 +580,7 @@ class ResponsesService:
         web_search_active: bool,
         should_log: bool,
         base_filename: str,
+        correlation_id: str | None = None,
     ) -> AsyncIterator[bytes]:
         response_id = _new_id("resp")
         snapshot = _base_response(payload, response_id, str(payload.get("model") or chat_payload["model"]))
@@ -907,6 +921,7 @@ class ResponsesService:
                     "headers": {"content-type": "text/event-stream"},
                     "chunks": chunks_log,
                 },
+                correlation_id,
             )
             if self._ledger_service and base_filename:
                 await self._ledger_service.validate_and_record(

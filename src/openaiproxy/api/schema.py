@@ -73,6 +73,7 @@ class TraceSummarySchema(BaseModel):
     duration_ms: float | None
     message_count: int
     error: str | None
+    correlation_id: str | None = None
 
 
 class TraceDetailResponse(BaseModel):

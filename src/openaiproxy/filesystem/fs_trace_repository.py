@@ -33,11 +33,23 @@ class FSTraceRepository(TraceRepository):
         except (OSError, json.JSONDecodeError):
             return None
 
-    def _build_summary(self, trace_id: str) -> TraceSummary | None:
-        request_data = self._read_json(self._trace_dir / f"{trace_id}_request.json")
+    def _correlation_id_for(self, request_path: Path, request_data: dict[str, Any]) -> str | None:
+        stored = request_data.get("correlation_id")
+        if isinstance(stored, str) and stored:
+            return stored
+        # Fallback for traces written before correlation ids were persisted:
+        # infer it from the parent directory name (unless it is the trace root).
+        parent = request_path.parent
+        if parent != self._trace_dir:
+            return parent.name
+        return None
+
+    def _build_summary_from_path(self, request_path: Path) -> TraceSummary | None:
+        request_data = self._read_json(request_path)
         if request_data is None:
             return None
-        response_data = self._read_json(self._trace_dir / f"{trace_id}_response.json") or {}
+        trace_id = request_path.name[: -len("_request.json")]
+        response_data = self._read_json(request_path.with_name(f"{trace_id}_response.json")) or {}
 
         match = _TRACE_ID_RE.match(trace_id)
         api_key = match.group("api_key") if match else "unknown"
@@ -66,13 +78,28 @@ class FSTraceRepository(TraceRepository):
             duration_ms=duration_ms,
             message_count=message_count,
             error=str(error) if error is not None else None,
+            correlation_id=self._correlation_id_for(request_path, request_data),
         )
 
-    def _iter_trace_ids(self) -> list[str]:
+    def _request_path(self, trace_id: str) -> Path | None:
+        # Traces may live either at the root or nested under a correlation-id
+        # directory, so search recursively for the matching request file.
+        flat = self._trace_dir / f"{trace_id}_request.json"
+        if flat.exists():
+            return flat
+        for candidate in self._trace_dir.rglob(f"{trace_id}_request.json"):
+            return candidate
+        return None
+
+    def _iter_request_files(self) -> list[Path]:
         if not self._trace_dir.exists():
             return []
-        ids = [p.name[: -len("_request.json")] for p in self._trace_dir.glob("*_request.json")]
-        return sorted(ids, key=lambda trace_id: trace_id.rsplit("_", 3)[-3:], reverse=True)
+        files = list(self._trace_dir.rglob("*_request.json"))
+        return sorted(
+            files,
+            key=lambda p: p.name[: -len("_request.json")].rsplit("_", 3)[-3:],
+            reverse=True,
+        )
 
     def _matches(
         self,
@@ -82,10 +109,13 @@ class FSTraceRepository(TraceRepository):
         status: str | None,
         since: str | None,
         query: str | None,
+        correlation_id: str | None = None,
     ) -> bool:
         if model and summary.model != model:
             return False
         if api_key and summary.api_key != api_key:
+            return False
+        if correlation_id and summary.correlation_id != correlation_id:
             return False
         if status:
             if status == "error":
@@ -110,16 +140,17 @@ class FSTraceRepository(TraceRepository):
         status: str | None = None,
         since: str | None = None,
         query: str | None = None,
+        correlation_id: str | None = None,
     ) -> list[TraceSummary]:
         results: list[TraceSummary] = []
         skipped = 0
-        for trace_id in self._iter_trace_ids():
-            summary = self._build_summary(trace_id)
+        for request_path in self._iter_request_files():
+            summary = self._build_summary_from_path(request_path)
             if summary is None:
                 continue
             if summary.endpoint == "/models":
                 continue
-            if not self._matches(summary, model, api_key, status, since, query):
+            if not self._matches(summary, model, api_key, status, since, query, correlation_id):
                 continue
             if skipped < offset:
                 skipped += 1
@@ -132,12 +163,15 @@ class FSTraceRepository(TraceRepository):
     def get_trace(self, trace_id: str) -> TraceDetail | None:
         if "/" in trace_id or "\\" in trace_id or ".." in trace_id:
             return None
-        summary = self._build_summary(trace_id)
+        request_path = self._request_path(trace_id)
+        if request_path is None:
+            return None
+        summary = self._build_summary_from_path(request_path)
         if summary is None:
             return None
 
-        request_data = self._read_json(self._trace_dir / f"{trace_id}_request.json") or {}
-        response_data = self._read_json(self._trace_dir / f"{trace_id}_response.json") or {}
+        request_data = self._read_json(request_path) or {}
+        response_data = self._read_json(request_path.with_name(f"{trace_id}_response.json")) or {}
 
         chunks = response_data.get("chunks")
         chunks = [str(c) for c in chunks] if isinstance(chunks, list) else []

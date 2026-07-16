@@ -17,6 +17,9 @@ from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.ledger_service import LedgerService
 
 
+CORRELATION_ID_HEADER = "x-correlation-id"
+
+
 def extract_api_key(headers: dict[str, str]) -> str:
     auth_header = headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
@@ -26,6 +29,40 @@ def extract_api_key(headers: dict[str, str]) -> str:
 
 def sanitize_api_key_for_filename(api_key: str) -> str:
     return api_key.replace("/", "_").replace("\\", "_").replace(":", "_")
+
+
+def sanitize_correlation_id(value: str) -> str:
+    """Make a correlation id safe to use as a single directory name.
+
+    Path separators and traversal sequences are neutralised so the value can
+    never escape the trace directory. Returns an empty string when nothing
+    usable remains.
+    """
+    cleaned = value.strip().replace("/", "_").replace("\\", "_").replace(":", "_")
+    cleaned = cleaned.replace("\x00", "").strip(". ")
+    if cleaned in ("", ".", ".."):
+        return ""
+    return cleaned[:200]
+
+
+def extract_correlation_id(headers: dict[str, str]) -> str | None:
+    """Return the sanitized X-Correlation-Id header value, or None if absent."""
+    raw = headers.get(CORRELATION_ID_HEADER)
+    if not raw:
+        return None
+    sanitized = sanitize_correlation_id(raw)
+    return sanitized or None
+
+
+def trace_subdir(trace_dir: Path, correlation_id: str | None) -> Path:
+    """Resolve the directory a trace should be written to.
+
+    When a correlation id is present the trace is nested under a directory
+    named after it so all messages of the same thread are grouped together.
+    """
+    if correlation_id:
+        return trace_dir / correlation_id
+    return trace_dir
 
 
 _RESPONSE_FRAMING_HEADERS = {
@@ -43,16 +80,25 @@ def filter_response_headers(headers: dict[str, str]) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in _RESPONSE_FRAMING_HEADERS}
 
 
-async def save_request_trace(trace_dir: Path, endpoint_path: str, payload: Any, headers: dict[str, str], api_key: str) -> str:
+async def save_request_trace(
+    trace_dir: Path,
+    endpoint_path: str,
+    payload: Any,
+    headers: dict[str, str],
+    api_key: str,
+    correlation_id: str | None = None,
+) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     safe_api_key = sanitize_api_key_for_filename(api_key)
     base_filename = f"{safe_api_key}_{timestamp}"
-    trace_dir.mkdir(parents=True, exist_ok=True)
-    filename = trace_dir / f"{base_filename}_request.json"
+    target_dir = trace_subdir(trace_dir, correlation_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    filename = target_dir / f"{base_filename}_request.json"
 
     data = {
         "timestamp": datetime.now().isoformat(),
         "endpoint": endpoint_path,
+        "correlation_id": correlation_id,
         "headers": dict(headers),
         "payload": payload,
     }
@@ -65,9 +111,15 @@ async def save_request_trace(trace_dir: Path, endpoint_path: str, payload: Any, 
     return base_filename
 
 
-async def save_response_trace(trace_dir: Path, base_filename: str, response_data: dict[str, Any]) -> None:
-    trace_dir.mkdir(parents=True, exist_ok=True)
-    filename = trace_dir / f"{base_filename}_response.json"
+async def save_response_trace(
+    trace_dir: Path,
+    base_filename: str,
+    response_data: dict[str, Any],
+    correlation_id: str | None = None,
+) -> None:
+    target_dir = trace_subdir(trace_dir, correlation_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    filename = target_dir / f"{base_filename}_response.json"
 
     def _write() -> None:
         with open(filename, "w") as f:
@@ -108,11 +160,22 @@ class ProxyService:
 
         return None
 
-    async def _save_request(self, endpoint_path: str, payload: Any, headers: dict[str, str], api_key: str) -> str:
-        return await save_request_trace(self._trace_dir, endpoint_path, payload, headers, api_key)
+    async def _save_request(
+        self,
+        endpoint_path: str,
+        payload: Any,
+        headers: dict[str, str],
+        api_key: str,
+        correlation_id: str | None = None,
+    ) -> str:
+        return await save_request_trace(
+            self._trace_dir, endpoint_path, payload, headers, api_key, correlation_id
+        )
 
-    async def _save_response(self, base_filename: str, response_data: dict[str, Any]) -> None:
-        await save_response_trace(self._trace_dir, base_filename, response_data)
+    async def _save_response(
+        self, base_filename: str, response_data: dict[str, Any], correlation_id: str | None = None
+    ) -> None:
+        await save_response_trace(self._trace_dir, base_filename, response_data, correlation_id)
 
     async def substitute_role(self, payload: dict, endpoint_config: EndpointConfig) -> dict:
         substitutions = endpoint_config.substitute_role
@@ -135,6 +198,7 @@ class ProxyService:
                 }
         requested_model = payload.get("model") if isinstance(payload, dict) else None
         forwarded_model = requested_model
+        correlation_id = extract_correlation_id(headers)
 
         selected_endpoint = self._select_endpoint_for_model(requested_model)
 
@@ -145,10 +209,11 @@ class ProxyService:
                 body_to_forward = json.dumps(payload).encode("utf-8")
 
         self._logger.info(
-            "route_resolve requested_model=%s forwarded_model=%s endpoint=%s",
+            "route_resolve requested_model=%s forwarded_model=%s endpoint=%s correlation_id=%s",
             requested_model,
             forwarded_model,
             (selected_endpoint.name if selected_endpoint else None),
+            correlation_id,
         )
         if not selected_endpoint:
             config = self._config_repository.load()
@@ -184,7 +249,11 @@ class ProxyService:
 
         should_log = bool(selected_endpoint.log) and endpoint_path != "/models"
         api_key = extract_api_key(headers) if "authorization" in headers else (selected_endpoint.api_key or "unknown")
-        base_filename = await self._save_request(endpoint_path, payload, headers, api_key) if should_log else ""
+        base_filename = (
+            await self._save_request(endpoint_path, payload, headers, api_key, correlation_id)
+            if should_log
+            else ""
+        )
 
         hop_by_hop_headers = {
             "host",
@@ -243,7 +312,7 @@ class ProxyService:
                                 yield chunk
 
                             if should_log:
-                                await self._save_response(base_filename, response_data)
+                                await self._save_response(base_filename, response_data, correlation_id)
                             if self._ledger_service and base_filename:
                                 await self._ledger_service.validate_and_record(
                                     trace_id=base_filename,
@@ -266,7 +335,7 @@ class ProxyService:
                             "error": str(e),
                         }
                         if should_log:
-                            await self._save_response(base_filename, response_data)
+                            await self._save_response(base_filename, response_data, correlation_id)
                         yield error_msg.encode()
 
             return {
@@ -293,7 +362,7 @@ class ProxyService:
                     else response.text,
                 }
                 if should_log:
-                    await self._save_response(base_filename, response_data)
+                    await self._save_response(base_filename, response_data, correlation_id)
                 if self._ledger_service and base_filename:
                     body_json = response_data.get("body") if isinstance(response_data.get("body"), dict) else None
                     await self._ledger_service.validate_and_record(
@@ -331,7 +400,7 @@ class ProxyService:
                     "error": str(e),
                 }
                 if should_log:
-                    await self._save_response(base_filename, response_data)
+                    await self._save_response(base_filename, response_data, correlation_id)
 
                 return {
                     "type": "response",

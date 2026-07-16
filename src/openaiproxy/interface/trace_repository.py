@@ -16,6 +16,7 @@ class TraceRepository(ABC):
         status: str | None = None,
         since: str | None = None,
         query: str | None = None,
+        correlation_id: str | None = None,
     ) -> list[TraceSummary]:
         raise NotImplementedError
 

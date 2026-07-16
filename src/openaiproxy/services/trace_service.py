@@ -46,6 +46,7 @@ class TraceService:
         status: str | None = None,
         since: str | None = None,
         query: str | None = None,
+        correlation_id: str | None = None,
     ) -> list[TraceSummary]:
         return self._trace_repository.list_traces(
             limit=limit,
@@ -55,6 +56,7 @@ class TraceService:
             status=status,
             since=since,
             query=query,
+            correlation_id=correlation_id,
         )
 
     def get_trace(self, trace_id: str) -> tuple[TraceDetail, str] | None:

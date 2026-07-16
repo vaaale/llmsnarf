@@ -109,6 +109,7 @@ def _summary_to_schema(summary: TraceSummary) -> TraceSummarySchema:
         duration_ms=summary.duration_ms,
         message_count=summary.message_count,
         error=summary.error,
+        correlation_id=summary.correlation_id,
     )
 
 
@@ -202,6 +203,7 @@ def list_traces(
     status: str | None = None,
     since: str | None = None,
     q: str | None = None,
+    correlation_id: str | None = None,
     trace_service: TraceService = Depends(get_trace_service),
 ) -> list[TraceSummarySchema]:
     summaries = trace_service.list_traces(
@@ -212,6 +214,7 @@ def list_traces(
         status=status,
         since=since,
         query=q,
+        correlation_id=correlation_id,
     )
     return [_summary_to_schema(summary) for summary in summaries]
 
