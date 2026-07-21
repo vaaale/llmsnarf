@@ -9,6 +9,7 @@ from openaiproxy.api.schema import (
     LedgerEntrySchema,
     RouteResolveResponse,
     StatsResponse,
+    TraceCallSchema,
     TraceDetailResponse,
     TraceSummarySchema,
     ValidationIssueSchema,
@@ -19,7 +20,7 @@ from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebFetchCo
 from openaiproxy.models.trace_models import TraceSummary
 from openaiproxy.services.config_service import ConfigService, ConfigValidationError
 from openaiproxy.services.ledger_service import LedgerService
-from openaiproxy.services.trace_service import TraceService
+from openaiproxy.services.trace_service import TraceService, assemble_stream_content
 
 router = APIRouter(prefix="/ui/api")
 
@@ -54,6 +55,7 @@ def _endpoint_to_schema(endpoint: EndpointConfig) -> EndpointSchema:
         log=endpoint.log,
         enabled=endpoint.enabled,
         max_models=endpoint.max_models,
+        protocol=endpoint.protocol if endpoint.protocol in ("openai", "anthropic") else "openai",
     )
 
 
@@ -68,6 +70,7 @@ def _schema_to_endpoint(schema: EndpointSchema) -> EndpointConfig:
         substitute_role=dict(schema.substitute_role),
         enabled=schema.enabled,
         max_models=schema.max_models,
+        protocol=schema.protocol,
     )
 
 
@@ -88,6 +91,11 @@ def _config_to_response(config: LLMProxyConfig) -> ConfigResponse:
             filter=config.web_search.filter,
             mode=config.web_search.mode,
             engines=list(config.web_search.engines),
+            max_searches=config.web_search.max_searches,
+            map_reduce_context_limit=config.web_search.map_reduce_context_limit,
+            map_reduce_call_limit=config.web_search.map_reduce_call_limit,
+            map_reduce_chunk_size=config.web_search.map_reduce_chunk_size,
+            map_reduce_reduce=config.web_search.map_reduce_reduce,
         ),
         web_fetch=WebFetchSchema(
             base_url=config.web_fetch.base_url,
@@ -110,6 +118,7 @@ def _summary_to_schema(summary: TraceSummary) -> TraceSummarySchema:
         message_count=summary.message_count,
         error=summary.error,
         correlation_id=summary.correlation_id,
+        parent_trace_id=summary.parent_trace_id,
     )
 
 
@@ -146,6 +155,11 @@ def update_web_search_config(
         filter=payload.filter,
         mode=payload.mode,
         engines=list(payload.engines),
+        max_searches=payload.max_searches,
+        map_reduce_context_limit=payload.map_reduce_context_limit,
+        map_reduce_call_limit=payload.map_reduce_call_limit,
+        map_reduce_chunk_size=payload.map_reduce_chunk_size,
+        map_reduce_reduce=payload.map_reduce_reduce,
     )
     if not web_search.base_url:
         raise HTTPException(status_code=422, detail="Web search base_url is required")
@@ -228,6 +242,16 @@ def get_trace(
     if result is None:
         raise HTTPException(status_code=404, detail="Trace not found")
     detail, assembled = result
+    children = [
+        TraceCallSchema(
+            summary=_summary_to_schema(child.summary),
+            request_payload=child.request_payload,
+            response_body=child.response_body,
+            response_chunks=child.response_chunks,
+            assembled_content=assemble_stream_content(child.response_chunks) if child.response_chunks else "",
+        )
+        for child in detail.children
+    ]
     return TraceDetailResponse(
         summary=_summary_to_schema(detail.summary),
         request_headers=detail.request_headers,
@@ -236,6 +260,7 @@ def get_trace(
         response_body=detail.response_body,
         response_chunks=detail.response_chunks,
         assembled_content=assembled,
+        children=children,
     )
 
 

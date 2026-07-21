@@ -14,6 +14,7 @@ class EndpointConfig:
     substitute_role: dict[str, str] | None
     enabled: bool = True
     max_models: int = 0  # max loaded models on the endpoint; < 1 disables tracking
+    protocol: str = "openai"  # wire format of the upstream: openai | anthropic
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,11 @@ class WebSearchConfig:
     filter: bool = False
     mode: str = "balanced"  # any | fast | balanced
     engines: list[str] = field(default_factory=list)  # bing, google, yandex, baidu, duckduckgo, ecosia
+    max_searches: int = 3  # max total search/fetch calls the proxy runs per client request; <=0 = unlimited
+    map_reduce_context_limit: int = 16000  # approximate token threshold to trigger map-reduce
+    map_reduce_call_limit: int = 0  # per-call token budget for map/reduce LLM calls; 0 = same as context_limit
+    map_reduce_chunk_size: int = 4000  # approximate tokens per chunk
+    map_reduce_reduce: bool = True  # do a final reduce call; False = concatenate map results
 
 
 @dataclass(frozen=True)

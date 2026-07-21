@@ -5,6 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 
+from openaiproxy.services.anthropic_service import AnthropicService
 from openaiproxy.services.proxy_service import ProxyService
 from openaiproxy.services.responses_service import ResponsesService
 
@@ -20,6 +21,10 @@ def get_proxy_service(request: Request) -> ProxyService:
 
 def get_responses_service(request: Request) -> ResponsesService:
     return request.app.state.responses_service
+
+
+def get_anthropic_service(request: Request) -> AnthropicService:
+    return request.app.state.anthropic_service
 
 
 @router.post("/v1/chat/completions")
@@ -52,6 +57,36 @@ async def proxy_responses(request: Request, responses_service: ResponsesService 
     status_code = result["status_code"]
     if status_code >= 400:
         logger.warning("response_status method=%s path=/responses status=%s", request.method, status_code)
+
+    return Response(
+        content=result["content"],
+        status_code=status_code,
+        headers=result.get("headers"),
+    )
+
+
+@router.post("/v1/messages")
+async def proxy_anthropic_messages(
+    request: Request, anthropic_service: AnthropicService = Depends(get_anthropic_service)
+):
+    body = await request.body()
+    headers = dict(request.headers)
+
+    logger.info(
+        "incoming_request method=%s path=/messages client=%s body_bytes=%d",
+        request.method,
+        request.client.host if request.client else "unknown",
+        len(body),
+    )
+
+    result = await anthropic_service.handle(body=body, headers=headers)
+
+    if result["type"] == "stream":
+        return StreamingResponse(result["iterator"], media_type="text/event-stream")
+
+    status_code = result["status_code"]
+    if status_code >= 400:
+        logger.warning("response_status method=%s path=/messages status=%s", request.method, status_code)
 
     return Response(
         content=result["content"],
@@ -113,6 +148,7 @@ async def root():
             "/v1/chat/completions",
             "/v1/completions",
             "/v1/responses",
+            "/v1/messages",
             "/v1/{endpoint_path:path}",
         ],
     }

@@ -13,11 +13,24 @@ llmproxy:
     filter: false
     mode: balanced  # any | fast | balanced
     engines: []  # bing, google, yandex, baidu, duckduckgo, ecosia (empty = all)
+    max_searches: 3  # max total search/fetch calls the proxy runs per client request (0 = unlimited)
+    map_reduce_context_limit: 16000  # trigger map-reduce when estimated payload tokens exceed this
+    map_reduce_call_limit: 0        # per-call token budget for each map/reduce LLM call; 0 = same as context_limit
+    map_reduce_chunk_size: 4000     # approximate tokens per chunk during map phase
+    map_reduce_reduce: true         # true = final reduce call; false = concatenate map results
   web_fetch:
     format: markdown  # json | markdown | text | ndjson
     mode: auto  # auto | fast | rendered
     min_runes: 0  # minimum character count for extracted content
   endpoints:
+    anthropic:
+      base_url: https://api.anthropic.com/v1
+      protocol: anthropic # upstream speaks the Anthropic Messages API
+      models:
+      - claude-opus-4-7 # OpenAI clients (/v1/chat/completions) and Anthropic clients (/v1/messages) both work
+      log: true
+      enabled: false
+      api_key: sk-ant-123
     openai:
       base_url: https://otherhost/v1
       models:

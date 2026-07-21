@@ -15,6 +15,11 @@ class WebSearchSchema(BaseModel):
     filter: bool = False
     mode: Literal["any", "fast", "balanced"] = "balanced"
     engines: list[str] = Field(default_factory=list)
+    max_searches: int = Field(default=3, ge=0)
+    map_reduce_context_limit: int = Field(default=16000, ge=1000)
+    map_reduce_call_limit: int = Field(default=0, ge=0)
+    map_reduce_chunk_size: int = Field(default=4000, ge=500)
+    map_reduce_reduce: bool = True
 
 
 class WebFetchSchema(BaseModel):
@@ -37,6 +42,9 @@ class EndpointSchema(BaseModel):
     log: bool = True
     enabled: bool = True
     max_models: int = Field(default=0, description="Max loaded models on the endpoint. Less than 1 disables tracking.")
+    protocol: Literal["openai", "anthropic"] = Field(
+        default="openai", description="Wire format of the upstream endpoint."
+    )
 
 
 class ConfigResponse(BaseModel):
@@ -74,6 +82,15 @@ class TraceSummarySchema(BaseModel):
     message_count: int
     error: str | None
     correlation_id: str | None = None
+    parent_trace_id: str | None = None
+
+
+class TraceCallSchema(BaseModel):
+    summary: TraceSummarySchema
+    request_payload: Any
+    response_body: Any
+    response_chunks: list[str]
+    assembled_content: str
 
 
 class TraceDetailResponse(BaseModel):
@@ -84,6 +101,7 @@ class TraceDetailResponse(BaseModel):
     response_body: Any
     response_chunks: list[str]
     assembled_content: str
+    children: list[TraceCallSchema] = []
 
 
 class StatsResponse(BaseModel):

@@ -13,6 +13,7 @@ from openaiproxy.filesystem.fs_trace_repository import FSTraceRepository
 from openaiproxy.interface.repository import LLMProxyConfigRepository
 from openaiproxy.logging_config import configure_logging
 from openaiproxy.middleware.exception_logging import ExceptionLoggingMiddleware
+from openaiproxy.services.anthropic_service import AnthropicService
 from openaiproxy.services.config_service import ConfigService
 from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.model_tracker_service import ModelTrackerService
@@ -57,6 +58,13 @@ def create_app(
         trace_dir=Path(trace_dir),
         logger=logger,
         web_search_service=web_search_service,
+        model_tracker=model_tracker,
+        ledger_service=ledger_service,
+    )
+    app.state.anthropic_service = AnthropicService(
+        config_repository=config_repository,
+        trace_dir=Path(trace_dir),
+        logger=logger,
         model_tracker=model_tracker,
         ledger_service=ledger_service,
     )

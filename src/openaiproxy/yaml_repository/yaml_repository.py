@@ -33,6 +33,11 @@ def _parse_web_search(raw: object) -> WebSearchConfig:
         filter=bool(defaults.filter if raw.get("filter") is None else raw.get("filter")),
         mode=str(raw.get("mode") or defaults.mode),
         engines=engines,
+        max_searches=int(defaults.max_searches if raw.get("max_searches") is None else raw.get("max_searches")),
+        map_reduce_context_limit=int(defaults.map_reduce_context_limit if raw.get("map_reduce_context_limit") is None else raw.get("map_reduce_context_limit")),
+        map_reduce_call_limit=int(defaults.map_reduce_call_limit if raw.get("map_reduce_call_limit") is None else raw.get("map_reduce_call_limit")),
+        map_reduce_chunk_size=int(defaults.map_reduce_chunk_size if raw.get("map_reduce_chunk_size") is None else raw.get("map_reduce_chunk_size")),
+        map_reduce_reduce=bool(defaults.map_reduce_reduce if raw.get("map_reduce_reduce") is None else raw.get("map_reduce_reduce")),
     )
 
 
@@ -79,6 +84,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 substitute_role_raw = entry.get("substitute_role")
                 enabled = entry.get("enabled")
                 max_models = entry.get("max_models")
+                protocol = entry.get("protocol")
 
                 if not base_url or not models:
                     continue
@@ -107,6 +113,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                         substitute_role=substitute_role,
                         enabled=bool(True if enabled is None else enabled),
                         max_models=int(max_models) if max_models is not None else 0,
+                        protocol=str(protocol) if protocol else "openai",
                     )
                 )
 
@@ -137,6 +144,8 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 entry["substitute_role"] = dict(endpoint.substitute_role)
             if endpoint.max_models > 0:
                 entry["max_models"] = endpoint.max_models
+            if endpoint.protocol and endpoint.protocol != "openai":
+                entry["protocol"] = endpoint.protocol
             endpoints[endpoint.name] = entry
 
         llmproxy: dict = {}
@@ -158,6 +167,11 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
             "filter": config.web_search.filter,
             "mode": config.web_search.mode,
             "engines": list(config.web_search.engines),
+            "max_searches": config.web_search.max_searches,
+            "map_reduce_context_limit": config.web_search.map_reduce_context_limit,
+            "map_reduce_call_limit": config.web_search.map_reduce_call_limit,
+            "map_reduce_chunk_size": config.web_search.map_reduce_chunk_size,
+            "map_reduce_reduce": config.web_search.map_reduce_reduce,
         }
         llmproxy["web_fetch"] = {
             "base_url": config.web_fetch.base_url,

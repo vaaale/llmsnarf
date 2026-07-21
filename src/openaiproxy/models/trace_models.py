@@ -17,6 +17,7 @@ class TraceSummary:
     message_count: int
     error: str | None
     correlation_id: str | None = None
+    parent_trace_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -27,3 +28,4 @@ class TraceDetail:
     response_headers: dict[str, str] = field(default_factory=dict)
     response_body: Any = None
     response_chunks: list[str] = field(default_factory=list)
+    children: list["TraceDetail"] = field(default_factory=list)

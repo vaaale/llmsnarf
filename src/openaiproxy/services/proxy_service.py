@@ -13,6 +13,14 @@ from fastapi import HTTPException
 
 from openaiproxy.interface.repository import LLMProxyConfigRepository
 from openaiproxy.models.models import EndpointConfig
+from openaiproxy.services.anthropic_translation import (
+    AnthropicToChatStream,
+    anthropic_response_to_chat,
+    build_anthropic_headers,
+    chat_request_to_anthropic,
+    extract_error_message,
+    openai_error_body,
+)
 from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.ledger_service import LedgerService
 
@@ -87,6 +95,7 @@ async def save_request_trace(
     headers: dict[str, str],
     api_key: str,
     correlation_id: str | None = None,
+    parent_trace_id: str | None = None,
 ) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     safe_api_key = sanitize_api_key_for_filename(api_key)
@@ -99,6 +108,7 @@ async def save_request_trace(
         "timestamp": datetime.now().isoformat(),
         "endpoint": endpoint_path,
         "correlation_id": correlation_id,
+        "parent_trace_id": parent_trace_id,
         "headers": dict(headers),
         "payload": payload,
     }
@@ -255,6 +265,15 @@ class ProxyService:
             else ""
         )
 
+        if (
+            selected_endpoint.protocol == "anthropic"
+            and endpoint_path == "/chat/completions"
+            and isinstance(payload, dict)
+        ):
+            return await self._proxy_chat_via_anthropic(
+                payload, selected_endpoint, headers, should_log, base_filename, correlation_id
+            )
+
         hop_by_hop_headers = {
             "host",
             "connection",
@@ -270,7 +289,10 @@ class ProxyService:
         }
         forward_headers = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop_headers}
 
-        if "authorization" in headers:
+        if selected_endpoint.protocol == "anthropic":
+            forward_headers.pop("authorization", None)
+            forward_headers.update(build_anthropic_headers(headers, selected_endpoint.api_key))
+        elif "authorization" in headers:
             forward_headers["Authorization"] = headers["authorization"]
         elif selected_endpoint.api_key:
             forward_headers["Authorization"] = f"Bearer {selected_endpoint.api_key}"
@@ -408,3 +430,211 @@ class ProxyService:
                     "status_code": 500,
                     "headers": {"content-type": "application/json"},
                 }
+
+    async def _proxy_chat_via_anthropic(
+        self,
+        payload: dict,
+        endpoint: EndpointConfig,
+        headers: dict[str, str],
+        should_log: bool,
+        base_filename: str,
+        correlation_id: str | None,
+    ) -> dict:
+        """Forward an OpenAI chat completions request to an Anthropic-protocol
+        upstream, translating the request, response, and stream formats."""
+        anthropic_payload = chat_request_to_anthropic(payload)
+        forward_headers = build_anthropic_headers(headers, endpoint.api_key)
+        target_url = f"{endpoint.base_url}/messages"
+        model = str(payload.get("model") or "")
+        self._logger.debug(
+            "proxy_forward_anthropic target_url=%s streaming=%s should_log=%s",
+            target_url,
+            bool(payload.get("stream")),
+            should_log,
+        )
+
+        if payload.get("stream"):
+            return {
+                "type": "stream",
+                "iterator": self._anthropic_chat_stream(
+                    anthropic_payload, target_url, forward_headers, model,
+                    payload, should_log, base_filename, correlation_id,
+                ),
+            }
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            try:
+                upstream = await client.post(
+                    target_url, headers=forward_headers, json=anthropic_payload
+                )
+            except Exception as exc:
+                self._logger.exception(
+                    "proxy_anthropic_request_error target_url=%s: %s", target_url, exc
+                )
+                if should_log:
+                    await self._save_response(
+                        base_filename,
+                        {"timestamp": datetime.now().isoformat(), "error": str(exc)},
+                        correlation_id,
+                    )
+                return {
+                    "type": "response",
+                    "content": json.dumps(openai_error_body(502, str(exc))).encode("utf-8"),
+                    "status_code": 502,
+                    "headers": {"content-type": "application/json"},
+                }
+
+        if upstream.status_code != 200:
+            self._logger.warning(
+                "proxy_anthropic_upstream_error target_url=%s status=%s body=%s",
+                target_url,
+                upstream.status_code,
+                upstream.text[:500],
+            )
+            error = openai_error_body(
+                upstream.status_code, extract_error_message(upstream.content)
+            )
+            if should_log:
+                await self._save_response(
+                    base_filename,
+                    {
+                        "timestamp": datetime.now().isoformat(),
+                        "status_code": upstream.status_code,
+                        "headers": dict(upstream.headers),
+                        "body": error,
+                    },
+                    correlation_id,
+                )
+            return {
+                "type": "response",
+                "content": json.dumps(error).encode("utf-8"),
+                "status_code": upstream.status_code,
+                "headers": {"content-type": "application/json"},
+            }
+
+        try:
+            upstream_data = upstream.json()
+        except Exception:
+            self._logger.warning(
+                "proxy_anthropic_upstream_non_json target_url=%s body=%s",
+                target_url,
+                upstream.text[:200],
+            )
+            error = openai_error_body(502, "Upstream returned a non-JSON response")
+            return {
+                "type": "response",
+                "content": json.dumps(error).encode("utf-8"),
+                "status_code": 502,
+                "headers": {"content-type": "application/json"},
+            }
+        result = anthropic_response_to_chat(upstream_data, model)
+        if should_log:
+            await self._save_response(
+                base_filename,
+                {
+                    "timestamp": datetime.now().isoformat(),
+                    "status_code": 200,
+                    "headers": {"content-type": "application/json"},
+                    "body": result,
+                },
+                correlation_id,
+            )
+        if self._ledger_service and base_filename:
+            await self._ledger_service.validate_and_record(
+                trace_id=base_filename,
+                model=payload.get("model"),
+                endpoint="/chat/completions",
+                request_payload=payload,
+                response_body=result,
+                response_chunks=[],
+            )
+
+        return {
+            "type": "response",
+            "content": json.dumps(result).encode("utf-8"),
+            "status_code": 200,
+            "headers": {"content-type": "application/json"},
+        }
+
+    async def _anthropic_chat_stream(
+        self,
+        anthropic_payload: dict,
+        target_url: str,
+        forward_headers: dict[str, str],
+        model: str,
+        request_payload: dict,
+        should_log: bool,
+        base_filename: str,
+        correlation_id: str | None,
+    ):
+        translator = AnthropicToChatStream(model=model)
+        chunks_log: list[str] = []
+
+        def emit(chunks: list[bytes]) -> list[bytes]:
+            if should_log:
+                for chunk in chunks:
+                    chunks_log.append(chunk.decode("utf-8", errors="replace"))
+            return chunks
+
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                async with client.stream(
+                    "POST", target_url, headers=forward_headers, json=anthropic_payload
+                ) as upstream:
+                    if upstream.status_code != 200:
+                        error_body = (await upstream.aread()).decode("utf-8", errors="replace")
+                        self._logger.warning(
+                            "proxy_anthropic_stream_upstream_error target_url=%s status=%s body=%s",
+                            target_url,
+                            upstream.status_code,
+                            error_body[:500],
+                        )
+                        error = openai_error_body(
+                            upstream.status_code, extract_error_message(error_body)
+                        )
+                        chunk = f"data: {json.dumps(error)}\n\ndata: [DONE]\n\n"
+                        chunks_log.append(chunk)
+                        yield chunk.encode("utf-8")
+                        return
+
+                    async for line in upstream.aiter_lines():
+                        line = line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        try:
+                            event = json.loads(data_str)
+                        except Exception:
+                            continue
+                        for chunk in emit(translator.process_event(event)):
+                            yield chunk
+
+            for chunk in emit(translator.finalize()):
+                yield chunk
+        except Exception as exc:
+            self._logger.exception("proxy_anthropic_stream_error target_url=%s: %s", target_url, exc)
+            error = openai_error_body(500, str(exc))
+            chunk = f"data: {json.dumps(error)}\n\ndata: [DONE]\n\n"
+            chunks_log.append(chunk)
+            yield chunk.encode("utf-8")
+        finally:
+            if should_log:
+                await self._save_response(
+                    base_filename,
+                    {
+                        "timestamp": datetime.now().isoformat(),
+                        "status_code": 200,
+                        "headers": {"content-type": "text/event-stream"},
+                        "chunks": chunks_log,
+                    },
+                    correlation_id,
+                )
+            if self._ledger_service and base_filename:
+                await self._ledger_service.validate_and_record(
+                    trace_id=base_filename,
+                    model=request_payload.get("model"),
+                    endpoint="/chat/completions",
+                    request_payload=request_payload,
+                    response_body=None,
+                    response_chunks=chunks_log,
+                )

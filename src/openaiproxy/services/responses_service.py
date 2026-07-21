@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+import anyio
 import httpx
 from fastapi import HTTPException
 
@@ -31,6 +32,13 @@ from openaiproxy.services.web_search_service import (
 )
 
 MAX_TOOL_ITERATIONS = 5
+SEARCH_BUDGET_MESSAGE = "Search budget reached — answer with the information already gathered."
+
+
+def _strip_tools(chat_payload: dict) -> None:
+    chat_payload.pop("tools", None)
+    chat_payload.pop("tool_choice", None)
+    chat_payload.pop("parallel_tool_calls", None)
 
 
 def _new_id(prefix: str) -> str:
@@ -256,6 +264,90 @@ def _reset_forced_tool_choice(chat_payload: dict) -> None:
         chat_payload["tool_choice"] = "auto"
 
 
+def _effective_call_limit(ws_config: Any) -> int:
+    if ws_config.map_reduce_call_limit > 0:
+        return ws_config.map_reduce_call_limit
+    return ws_config.map_reduce_context_limit
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // 3)
+
+
+def _build_citations(text: str, sources: list[dict]) -> tuple[str, list[dict]]:
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for s in sources:
+        url = s.get("url", "")
+        if url and url not in seen:
+            seen.add(url)
+            unique.append(s)
+    if not unique:
+        return text, []
+    annotations: list[dict] = []
+    new_text = text + "\n\n---"
+    for i, source in enumerate(unique, 1):
+        url = source["url"]
+        title = source.get("title") or url
+        label = f"[{i}] {title}"
+        start_index = len(new_text) + 1  # +1 to skip the leading \n
+        new_text += "\n" + label
+        end_index = len(new_text)
+        annotations.append({
+            "type": "url_citation",
+            "start_index": start_index,
+            "end_index": end_index,
+            "url": url,
+            "title": title,
+        })
+    return new_text, annotations
+
+
+def _lean_base_messages(messages: list[dict]) -> list[dict]:
+    """Conversational context for map/reduce calls: keep system/user turns and
+    assistant text, drop bulky prior tool results and their tool-call stubs so
+    each map call stays bounded regardless of how much history has accumulated."""
+    lean: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        if role == "tool":
+            continue
+        if role == "assistant" and m.get("tool_calls") and not m.get("content"):
+            continue
+        lean.append(m)
+    return lean
+
+
+def _chunk_text(text: str, chunk_tokens: int) -> list[str]:
+    if not text:
+        return []
+    char_budget = max(10, chunk_tokens * 3)  # 1 token ≈ 3 chars
+    boundaries = ["\n# ", "\n## ", "\n### ", "\n\n", ". ", " "]
+    chunks: list[str] = []
+    start = 0
+    n = len(text)
+    while start < n:
+        end = min(start + char_budget, n)
+        if end == n:
+            chunk = text[start:].strip()
+            if chunk:
+                chunks.append(chunk)
+            break
+        # Find the rightmost occurrence of any boundary within the budget
+        best_pos = -1
+        for boundary in boundaries:
+            pos = text.rfind(boundary, start, end)
+            if pos > start and pos > best_pos:
+                best_pos = pos
+        # Cut after the newline/period so the heading/sentence starts the next chunk
+        cut = best_pos + 1 if best_pos > start else end
+        chunk = text[start:cut].strip()
+        if chunk:
+            chunks.append(chunk)
+        start = cut
+    return chunks
+
+
 class ResponsesService:
     def __init__(
         self,
@@ -272,6 +364,144 @@ class ResponsesService:
         self._web_search_service = web_search_service
         self._model_tracker = model_tracker
         self._ledger_service = ledger_service
+
+    async def _map_reduce_search_result(
+        self,
+        base_messages: list[dict],
+        tool_call_id: str,
+        content: str,
+        model: str,
+        chat_url: str,
+        forward_headers: dict,
+        chunk_size: int,
+        do_reduce: bool,
+        context_limit: int = 0,
+        should_log: bool = False,
+        api_key: str = "unknown",
+        correlation_id: str | None = None,
+        parent_trace_id: str | None = None,
+    ) -> str:
+        # Each map/reduce call carries only the conversational context (the user's
+        # question), not the accumulated raw results of previous searches — so the
+        # per-call size stays bounded no matter how long the conversation grows.
+        lean_base = _lean_base_messages(base_messages)
+        base_tokens = _estimate_tokens(json.dumps({"messages": lean_base}))
+        if context_limit > 0:
+            available = context_limit - base_tokens
+            if available <= 0:
+                self._logger.warning(
+                    "map_reduce_lean_base_too_large base_tokens=%d context_limit=%d", base_tokens, context_limit
+                )
+                return content  # caller's final trim clamps it to the real budget
+            effective_chunk = min(chunk_size, available)
+        else:
+            effective_chunk = chunk_size
+        chunks = _chunk_text(content, effective_chunk)
+        total_chunks = len(chunks)
+        self._logger.info(
+            "map_reduce_start chunks=%d effective_chunk=%d base_tokens=%d tool_call_id=%s",
+            total_chunks, effective_chunk, base_tokens, tool_call_id,
+        )
+
+        def _map_messages(payload_content: str) -> list[dict]:
+            return [
+                *lean_base,
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": tool_call_id,
+                            "type": "function",
+                            "function": {"name": WEB_SEARCH_TOOL_NAME, "arguments": "{}"},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": tool_call_id, "content": payload_content},
+            ]
+
+        results: list[str] = [""] * total_chunks
+
+        async def map_one(chunk: str, chunk_index: int) -> None:
+            endpoint = f"/responses/map-reduce/{chunk_index + 1}/{total_chunks}"
+            payload = {"model": model, "messages": _map_messages(chunk)}
+            base_fn = ""
+            if should_log:
+                base_fn = await save_request_trace(
+                    self._trace_dir, endpoint, payload, forward_headers, api_key, correlation_id, parent_trace_id
+                )
+            try:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    resp = await client.post(chat_url, headers=forward_headers, json=payload)
+                    if should_log and base_fn:
+                        await save_response_trace(
+                            self._trace_dir, base_fn,
+                            {
+                                "timestamp": datetime.now().isoformat(),
+                                "status_code": resp.status_code,
+                                "headers": dict(resp.headers),
+                                "body": resp.text,
+                            },
+                            correlation_id,
+                        )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        results[chunk_index] = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            except Exception as exc:
+                self._logger.warning("map_reduce_map_call_error: %s", exc)
+                if should_log and base_fn:
+                    await save_response_trace(
+                        self._trace_dir, base_fn,
+                        {"timestamp": datetime.now().isoformat(), "error": str(exc)},
+                        correlation_id,
+                    )
+
+        async with anyio.create_task_group() as tg:
+            for i, chunk in enumerate(chunks):
+                tg.start_soon(map_one, chunk, i)
+
+        combined = "\n\n".join(r for r in results if r.strip())
+
+        if not do_reduce or not combined:
+            return combined
+
+        if context_limit > 0:
+            combined_limit = context_limit - base_tokens
+            if _estimate_tokens(combined) > combined_limit:
+                combined = combined[: combined_limit * 3]
+
+        reduce_payload = {"model": model, "messages": _map_messages(combined)}
+        reduce_fn = ""
+        if should_log:
+            reduce_fn = await save_request_trace(
+                self._trace_dir, "/responses/map-reduce/final", reduce_payload, forward_headers, api_key, correlation_id, parent_trace_id
+            )
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(chat_url, headers=forward_headers, json=reduce_payload)
+                if should_log and reduce_fn:
+                    await save_response_trace(
+                        self._trace_dir, reduce_fn,
+                        {
+                            "timestamp": datetime.now().isoformat(),
+                            "status_code": resp.status_code,
+                            "headers": dict(resp.headers),
+                            "body": resp.text,
+                        },
+                        correlation_id,
+                    )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        except Exception as exc:
+            self._logger.warning("map_reduce_reduce_call_error: %s", exc)
+            if should_log and reduce_fn:
+                await save_response_trace(
+                    self._trace_dir, reduce_fn,
+                    {"timestamp": datetime.now().isoformat(), "error": str(exc)},
+                    correlation_id,
+                )
+        return combined
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
         config = self._config_repository.load()
@@ -368,13 +598,13 @@ class ResponsesService:
                 "type": "stream",
                 "iterator": self._stream(
                     payload, chat_payload, chat_url, forward_headers, web_search_active,
-                    should_log, base_filename, correlation_id,
+                    should_log, base_filename, correlation_id, web_search_config, api_key,
                 ),
             }
 
         return await self._complete(
             payload, chat_payload, chat_url, forward_headers, web_search_active,
-            should_log, base_filename, correlation_id,
+            should_log, base_filename, correlation_id, web_search_config, api_key,
         )
 
     async def _trace_response(
@@ -393,6 +623,8 @@ class ResponsesService:
         should_log: bool,
         base_filename: str,
         correlation_id: str | None = None,
+        web_search_config: Any = None,
+        api_key: str = "unknown",
     ) -> dict:
         response_id = _new_id("resp")
         result = _base_response(payload, response_id, str(payload.get("model") or chat_payload["model"]))
@@ -400,6 +632,9 @@ class ResponsesService:
         output: list[dict] = []
         status = "completed"
         incomplete_reason: str | None = None
+        all_sources: list[dict] = []
+        max_searches = web_search_config.max_searches if web_search_config is not None else 0
+        searches_done = 0
 
         async with httpx.AsyncClient(timeout=3000.0) as client:
             for _ in range(MAX_TOOL_ITERATIONS):
@@ -462,13 +697,14 @@ class ResponsesService:
 
                 content = message.get("content")
                 if content:
+                    cited_content, annotations = _build_citations(content, all_sources)
                     output.append(
                         {
                             "type": "message",
                             "id": _new_id("msg"),
                             "role": "assistant",
                             "status": "completed",
-                            "content": [{"type": "output_text", "text": content, "annotations": []}],
+                            "content": [{"type": "output_text", "text": cited_content, "annotations": annotations}],
                         }
                     )
 
@@ -484,9 +720,16 @@ class ResponsesService:
                 if web_search_calls and not client_calls:
                     chat_payload["messages"].append(message)
                     for tool_call in web_search_calls:
+                        if max_searches > 0 and searches_done >= max_searches:
+                            chat_payload["messages"].append(
+                                {"role": "tool", "tool_call_id": tool_call.get("id"), "content": SEARCH_BUDGET_MESSAGE}
+                            )
+                            continue
+                        searches_done += 1
                         fn_name = (tool_call.get("function") or {}).get("name")
                         if fn_name == WEB_FETCH_TOOL_NAME:
                             fetch_url = _parse_fetch_url(tool_call)
+                            tool_result = await self._web_search_service.fetch(fetch_url)
                             output.append(
                                 {
                                     "type": "web_search_call",
@@ -495,12 +738,10 @@ class ResponsesService:
                                     "action": {"type": "fetch", "url": fetch_url},
                                 }
                             )
-                            fetch_result = await self._web_search_service.fetch(fetch_url)
-                            chat_payload["messages"].append(
-                                {"role": "tool", "tool_call_id": tool_call.get("id"), "content": fetch_result}
-                            )
                         else:
                             query = _parse_search_query(tool_call)
+                            tool_result, sources = await self._web_search_service.search(query)
+                            all_sources.extend(sources)
                             output.append(
                                 {
                                     "type": "web_search_call",
@@ -509,11 +750,40 @@ class ResponsesService:
                                     "action": {"type": "search", "query": query},
                                 }
                             )
-                            search_result = await self._web_search_service.search(query)
-                            chat_payload["messages"].append(
-                                {"role": "tool", "tool_call_id": tool_call.get("id"), "content": search_result}
-                            )
-                    _reset_forced_tool_choice(chat_payload)
+                        if web_search_config is not None:
+                            current_tokens = _estimate_tokens(json.dumps(chat_payload))
+                            if current_tokens + _estimate_tokens(tool_result) > web_search_config.map_reduce_context_limit:
+                                self._logger.info(
+                                    "map_reduce_triggered estimated_tokens=%d limit=%d",
+                                    current_tokens + _estimate_tokens(tool_result),
+                                    web_search_config.map_reduce_context_limit,
+                                )
+                                tool_result = await self._map_reduce_search_result(
+                                    list(chat_payload["messages"]),
+                                    tool_call.get("id") or "",
+                                    tool_result,
+                                    str(chat_payload.get("model", "")),
+                                    chat_url,
+                                    forward_headers,
+                                    web_search_config.map_reduce_chunk_size,
+                                    web_search_config.map_reduce_reduce,
+                                    context_limit=_effective_call_limit(web_search_config),
+                                    should_log=should_log,
+                                    api_key=api_key,
+                                    correlation_id=correlation_id,
+                                    parent_trace_id=base_filename,
+                                )
+                        if web_search_config is not None:
+                            remaining = _effective_call_limit(web_search_config) - _estimate_tokens(json.dumps(chat_payload))
+                            if remaining > 0 and _estimate_tokens(tool_result) > remaining:
+                                tool_result = tool_result[: remaining * 3]
+                        chat_payload["messages"].append(
+                            {"role": "tool", "tool_call_id": tool_call.get("id"), "content": tool_result}
+                        )
+                    if max_searches > 0 and searches_done >= max_searches:
+                        _strip_tools(chat_payload)
+                    else:
+                        _reset_forced_tool_choice(chat_payload)
                     continue
 
                 for tool_call in client_calls:
@@ -581,6 +851,8 @@ class ResponsesService:
         should_log: bool,
         base_filename: str,
         correlation_id: str | None = None,
+        web_search_config: Any = None,
+        api_key: str = "unknown",
     ) -> AsyncIterator[bytes]:
         response_id = _new_id("resp")
         snapshot = _base_response(payload, response_id, str(payload.get("model") or chat_payload["model"]))
@@ -604,6 +876,10 @@ class ResponsesService:
 
         yield event("response.created", {"response": snapshot})
         yield event("response.in_progress", {"response": snapshot})
+
+        all_sources: list[dict] = []
+        max_searches = web_search_config.max_searches if web_search_config is not None else 0
+        searches_done = 0
 
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
@@ -656,16 +932,28 @@ class ResponsesService:
                         if message_item is None:
                             return []
                         item_id = message_item["id"]
-                        part = {"type": "output_text", "text": text_acc, "annotations": []}
+                        cited_text, annotations = _build_citations(text_acc, all_sources)
+                        events = []
+                        if len(cited_text) > len(text_acc):
+                            events.append(event(
+                                "response.output_text.delta",
+                                {
+                                    "item_id": item_id,
+                                    "output_index": output_index,
+                                    "content_index": 0,
+                                    "delta": cited_text[len(text_acc):],
+                                },
+                            ))
+                        part = {"type": "output_text", "text": cited_text, "annotations": annotations}
                         done_item = {**message_item, "status": "completed", "content": [part]}
-                        events = [
+                        events.extend([
                             event(
                                 "response.output_text.done",
                                 {
                                     "item_id": item_id,
                                     "output_index": output_index,
                                     "content_index": 0,
-                                    "text": text_acc,
+                                    "text": cited_text,
                                 },
                             ),
                             event(
@@ -678,7 +966,7 @@ class ResponsesService:
                                 },
                             ),
                             event("response.output_item.done", {"output_index": output_index, "item": done_item}),
-                        ]
+                        ])
                         snapshot["output"].append(done_item)
                         output_index += 1
                         message_item = None
@@ -823,6 +1111,12 @@ class ResponsesService:
                             {"role": "assistant", "content": final_text or None, "tool_calls": tool_calls}
                         )
                         for tool_call in web_search_calls:
+                            if max_searches > 0 and searches_done >= max_searches:
+                                chat_payload["messages"].append(
+                                    {"role": "tool", "tool_call_id": tool_call["id"], "content": SEARCH_BUDGET_MESSAGE}
+                                )
+                                continue
+                            searches_done += 1
                             fn_name = tool_call["function"]["name"]
                             ws_item = {"id": _new_id("ws"), "type": "web_search_call", "status": "in_progress"}
                             yield event(
@@ -838,18 +1132,43 @@ class ResponsesService:
                             )
                             if fn_name == WEB_FETCH_TOOL_NAME:
                                 fetch_url = _parse_fetch_url(tool_call)
-                                fetch_result = await self._web_search_service.fetch(fetch_url)
-                                chat_payload["messages"].append(
-                                    {"role": "tool", "tool_call_id": tool_call["id"], "content": fetch_result}
-                                )
+                                result = await self._web_search_service.fetch(fetch_url)
                                 done_action = {"type": "fetch", "url": fetch_url}
                             else:
                                 query = _parse_search_query(tool_call)
-                                search_result = await self._web_search_service.search(query)
-                                chat_payload["messages"].append(
-                                    {"role": "tool", "tool_call_id": tool_call["id"], "content": search_result}
-                                )
+                                result, sources = await self._web_search_service.search(query)
+                                all_sources.extend(sources)
                                 done_action = {"type": "search", "query": query}
+                            if web_search_config is not None:
+                                current_tokens = _estimate_tokens(json.dumps(chat_payload))
+                                if current_tokens + _estimate_tokens(result) > web_search_config.map_reduce_context_limit:
+                                    self._logger.info(
+                                        "map_reduce_triggered estimated_tokens=%d limit=%d",
+                                        current_tokens + _estimate_tokens(result),
+                                        web_search_config.map_reduce_context_limit,
+                                    )
+                                    result = await self._map_reduce_search_result(
+                                        list(chat_payload["messages"]),
+                                        tool_call["id"],
+                                        result,
+                                        str(chat_payload.get("model", "")),
+                                        chat_url,
+                                        forward_headers,
+                                        web_search_config.map_reduce_chunk_size,
+                                        web_search_config.map_reduce_reduce,
+                                        context_limit=_effective_call_limit(web_search_config),
+                                        should_log=should_log,
+                                        api_key=api_key,
+                                        correlation_id=correlation_id,
+                                        parent_trace_id=base_filename,
+                                    )
+                            if web_search_config is not None:
+                                remaining = _effective_call_limit(web_search_config) - _estimate_tokens(json.dumps(chat_payload))
+                                if remaining > 0 and _estimate_tokens(result) > remaining:
+                                    result = result[: remaining * 3]
+                            chat_payload["messages"].append(
+                                {"role": "tool", "tool_call_id": tool_call["id"], "content": result}
+                            )
                             yield event(
                                 "response.web_search_call.completed",
                                 {"output_index": output_index, "item_id": ws_item["id"]},
@@ -864,7 +1183,10 @@ class ResponsesService:
                             )
                             snapshot["output"].append(done_ws)
                             output_index += 1
-                        _reset_forced_tool_choice(chat_payload)
+                        if max_searches > 0 and searches_done >= max_searches:
+                            _strip_tools(chat_payload)
+                        else:
+                            _reset_forced_tool_choice(chat_payload)
                         continue
 
                     for tool_call in client_calls:

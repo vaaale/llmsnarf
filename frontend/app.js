@@ -54,6 +54,10 @@ function statusTag(t) {
 }
 
 function typeTag(t) {
+  if (t.endpoint && t.endpoint.startsWith("/responses/map-reduce/")) {
+    const label = t.endpoint.slice("/responses/map-reduce/".length);
+    return `<span class="tag sync" title="map-reduce">${esc(label)}</span>`;
+  }
   return `<span class="tag ${t.stream ? "stream" : "sync"}">${t.stream ? "stream" : "sync"}</span>`;
 }
 
@@ -184,9 +188,22 @@ async function loadTraces() {
 function renderGroupedTraces(traces) {
   if (!traces.length) return '<tr><td colspan="7" class="empty">No traces match</td></tr>';
 
+  // Split map/reduce sub-calls (they carry parent_trace_id) out of the top level.
+  const childrenByParent = new Map();
+  const topLevel = [];
+  for (const t of traces) {
+    if (t.parent_trace_id) {
+      if (!childrenByParent.has(t.parent_trace_id)) childrenByParent.set(t.parent_trace_id, []);
+      childrenByParent.get(t.parent_trace_id).push(t);
+    } else {
+      topLevel.push(t);
+    }
+  }
+  for (const kids of childrenByParent.values()) kids.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
   const groups = [];
   const groupMap = new Map();
-  for (const t of traces) {
+  for (const t of topLevel) {
     const cid = t.correlation_id || null;
     if (cid) {
       if (!groupMap.has(cid)) {
@@ -200,10 +217,18 @@ function renderGroupedTraces(traces) {
     }
   }
 
+  const renderParent = (t, threadCid) => {
+    const kids = childrenByParent.get(t.id) || [];
+    let html = renderTraceRow(t, { nested: !!threadCid, threadCid, childCount: kids.length });
+    html += kids.map((c) =>
+      renderTraceRow(c, { nested: true, threadCid, parentId: t.id, hidden: true })
+    ).join("");
+    return html;
+  };
+
   return groups.map((g) => {
     if (!g.cid) {
-      const t = g.traces[0];
-      return renderTraceRow(t, false);
+      return g.traces.map((t) => renderParent(t, null)).join("");
     }
     const totalMsgs = g.traces.reduce((s, t) => s + (t.message_count || 0), 0);
     const firstTime = g.traces[0].timestamp;
@@ -218,17 +243,26 @@ function renderGroupedTraces(traces) {
         </td>
         <td></td>
       </tr>` +
-      g.traces.map((t) => {
-        const row = renderTraceRow(t, true);
-        return row.replace('id="row-', `data-thread="${safeCid}" id="row-`);
-      }).join("");
+      g.traces.map((t) => renderParent(t, g.cid)).join("");
   }).join("");
 }
 
-function renderTraceRow(t, nested) {
+function renderTraceRow(t, opts = {}) {
+  const { nested = false, threadCid = null, parentId = null, childCount = 0, hidden = false } = opts;
   const indent = nested ? 'padding-left:24px' : '';
-  return `<tr id="row-${esc(t.id)}" class="${t.id === selectedTraceId ? "selected" : ""}${nested ? " thread-child" : ""}" onclick="selectTrace('${esc(t.id)}')">
-        <td class="mono muted" style="${indent}">${fmtTime(t.timestamp)}</td>
+  const attrs = [`id="row-${esc(t.id)}"`];
+  if (threadCid) attrs.push(`data-thread="${esc(threadCid)}"`);
+  if (parentId) attrs.push(`data-parent="${esc(parentId)}"`);
+  if (hidden) attrs.push(`style="display:none"`);
+  const cls = ["selectable"];
+  if (t.id === selectedTraceId) cls.push("selected");
+  if (nested) cls.push("thread-child");
+  attrs.push(`class="${cls.join(" ")}"`);
+  const toggle = childCount
+    ? `<span class="child-toggle" id="ctoggle-${esc(t.id)}" onclick="toggleChildren('${esc(t.id)}');event.stopPropagation();">▶</span> `
+    : '';
+  return `<tr ${attrs.join(" ")} onclick="selectTrace('${esc(t.id)}')">
+        <td class="mono muted" style="${indent}">${toggle}${fmtTime(t.timestamp)}</td>
         <td><span class="tag model">${esc(t.model || "?")}</span></td>
         <td>${typeTag(t)}</td>
         <td>${statusTag(t)}</td>
@@ -240,11 +274,25 @@ function renderTraceRow(t, nested) {
 
 function toggleThread(cid) {
   const toggle = document.getElementById("toggle-" + cid);
-  const hidden = toggle && toggle.textContent === "▶";
-  document.querySelectorAll(`tr[data-thread="${cid}"]`).forEach((r) => {
-    r.style.display = hidden ? "" : "none";
+  const expand = toggle && toggle.textContent === "▶";
+  document.querySelectorAll(`tr[data-thread="${cid}"]:not([data-parent])`).forEach((r) => {
+    r.style.display = expand ? "" : "none";
   });
-  if (toggle) toggle.textContent = hidden ? "▼" : "▶";
+  document.querySelectorAll(`tr[data-thread="${cid}"][data-parent]`).forEach((r) => {
+    const ptoggle = document.getElementById("ctoggle-" + r.dataset.parent);
+    const parentExpanded = ptoggle && ptoggle.textContent === "▼";
+    r.style.display = (expand && parentExpanded) ? "" : "none";
+  });
+  if (toggle) toggle.textContent = expand ? "▼" : "▶";
+}
+
+function toggleChildren(parentId) {
+  const toggle = document.getElementById("ctoggle-" + parentId);
+  const expand = toggle && toggle.textContent === "▶";
+  document.querySelectorAll(`tr[data-parent="${parentId}"]`).forEach((r) => {
+    r.style.display = expand ? "" : "none";
+  });
+  if (toggle) toggle.textContent = expand ? "▼" : "▶";
 }
 
 function populateFilterOptions(traces) {
@@ -320,48 +368,47 @@ function messageContentToText(content) {
 }
 
 function renderConversation(d) {
-  const payload = d.request_payload;
-  const messages = extractRequestMessages(payload);
-  let html = "";
-  if (d.assembled_content) {
-    html += `<div class="assembled-note">⚡ Streaming response — assistant message assembled from ${d.response_chunks.length} SSE chunks</div>`;
-  }
-  html += messages.map((m, i) => {
-    const role = esc(m.role || m.type || "unknown");
-    return `<div class="msg ${role}">
-      <div class="msg-head" onclick="toggleMessage(${i})">
-        <span class="msg-role">${role}</span>
-        <span class="msg-toggle" id="msg-toggle-${i}">▼</span>
+  const calls = [d, ...(d.children || [])];
+  const html = calls.map((call, ci) => {
+    const label = esc(call.summary.endpoint || "request");
+    const body = renderCallMessages(call, ci);
+    return `<div class="call">
+      <div class="call-head" onclick="toggleCall(${ci})">
+        <span class="call-toggle" id="call-toggle-${ci}">▶</span>
+        <span class="call-label">${label}</span>
+        ${statusTag(call.summary)}
+        <span class="mono muted" style="font-size:11px">${fmtDuration(call.summary.duration_ms)}</span>
       </div>
-      <div class="msg-body" id="msg-body-${i}">${esc(m.content)}</div>
+      <div class="call-body" id="call-body-${ci}" style="display:none">${body}</div>
     </div>`;
   }).join("");
-
-  const responseParts = extractResponseParts(d);
-  for (let ri = 0; ri < responseParts.length; ri++) {
-    const part = responseParts[ri];
-    const idx = messages.length + ri;
-    const role = esc(part.role || part.type || "assistant");
-    html += `<div class="msg ${role}">
-      <div class="msg-head" onclick="toggleMessage(${idx})">
-        <span class="msg-role">${role}${part.note ? ` <span class="subst-note">${part.note}</span>` : ""}</span>
-        <span class="msg-toggle" id="msg-toggle-${idx}">▼</span>
-      </div>
-      <div class="msg-body" id="msg-body-${idx}">${esc(part.content)}</div>
-    </div>`;
-  }
-
-  if (d.summary.error) {
-    const errorIndex = messages.length + responseParts.length + 1;
-    html += `<div class="msg error">
-      <div class="msg-head" onclick="toggleMessage(${errorIndex})">
-        <span class="msg-role">error</span>
-        <span class="msg-toggle" id="msg-toggle-${errorIndex}">▼</span>
-      </div>
-      <div class="msg-body" id="msg-body-${errorIndex}">${esc(d.summary.error)}</div>
-    </div>`;
-  }
   document.getElementById("pane-conv").innerHTML = html || '<div class="empty">No messages in payload.</div>';
+}
+
+function renderCallMessages(d, prefix) {
+  const items = [];
+  if (d.assembled_content) {
+    // streaming — assembled response is included via extractResponseParts below
+  }
+  extractRequestMessages(d.request_payload).forEach((m) =>
+    items.push({ role: m.role || m.type || "unknown", content: m.content }));
+  extractResponseParts(d).forEach((p) =>
+    items.push({ role: p.role || p.type || "assistant", content: p.content, note: p.note }));
+  if (d.summary && d.summary.error) {
+    items.push({ role: "error", content: d.summary.error });
+  }
+  if (!items.length) return '<div class="empty">No messages.</div>';
+  return items.map((m, i) => {
+    const role = esc(m.role);
+    const key = `${prefix}-${i}`;
+    return `<div class="msg ${role}">
+      <div class="msg-head" onclick="toggleMessage('${key}')">
+        <span class="msg-role">${role}${m.note ? ` <span class="subst-note">${esc(m.note)}</span>` : ""}</span>
+        <span class="msg-toggle" id="msg-toggle-${key}">▶</span>
+      </div>
+      <div class="msg-body" id="msg-body-${key}" style="display:none">${esc(m.content)}</div>
+    </div>`;
+  }).join("");
 }
 
 function extractRequestMessages(payload) {
@@ -391,13 +438,19 @@ function normalizeInputItem(item) {
 
 function extractResponseParts(d) {
   const parts = [];
+  let body = d.response_body;
+  if (typeof body === "string") {
+    try { body = JSON.parse(body); } catch { /* leave as string */ }
+  }
   let assistant = d.assembled_content;
-  if (!assistant && d.response_body) {
-    if (Array.isArray(d.response_body.choices)) {
-      const choice = d.response_body.choices[0];
+  if (!assistant && body) {
+    if (typeof body === "string") {
+      assistant = body;
+    } else if (Array.isArray(body.choices)) {
+      const choice = body.choices[0];
       assistant = choice?.message?.content || choice?.text || "";
-    } else if (Array.isArray(d.response_body.output)) {
-      for (const item of d.response_body.output) {
+    } else if (Array.isArray(body.output)) {
+      for (const item of body.output) {
         if (item.type === "message" && Array.isArray(item.content)) {
           const text = item.content
             .filter((c) => c.type === "output_text" || c.type === "text")
@@ -425,19 +478,22 @@ function extractResponseParts(d) {
   return parts;
 }
 
-function toggleMessage(index) {
-  const body = document.getElementById(`msg-body-${index}`);
-  const toggle = document.getElementById(`msg-toggle-${index}`);
-  
-  if (body.style.display === 'none') {
-    body.style.display = 'block';
-    toggle.textContent = '▼';
-    toggle.style.transform = 'rotate(0deg)';
-  } else {
-    body.style.display = 'none';
-    toggle.textContent = '▶';
-    toggle.style.transform = 'rotate(0deg)';
-  }
+function toggleMessage(key) {
+  const body = document.getElementById(`msg-body-${key}`);
+  const toggle = document.getElementById(`msg-toggle-${key}`);
+  if (!body) return;
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? 'block' : 'none';
+  if (toggle) toggle.textContent = hidden ? '▼' : '▶';
+}
+
+function toggleCall(ci) {
+  const body = document.getElementById(`call-body-${ci}`);
+  const toggle = document.getElementById(`call-toggle-${ci}`);
+  if (!body) return;
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? 'block' : 'none';
+  if (toggle) toggle.textContent = hidden ? '▼' : '▶';
 }
 
 document.querySelectorAll("#d-tabs .tab").forEach((tab) => {
@@ -533,6 +589,7 @@ function renderWebSearch() {
   document.getElementById("ws-extract").value = ws.extract ?? 3;
   document.getElementById("ws-extract-mode").value = ws.extract_mode || "auto";
   document.getElementById("ws-limit").value = ws.limit ?? 25;
+  document.getElementById("ws-max-searches").value = ws.max_searches ?? 3;
   document.getElementById("ws-filter").classList.toggle("off", !ws.filter);
   document.getElementById("ws-mode").value = ws.mode || "balanced";
   const activeEngines = new Set(ws.engines || []);
@@ -541,6 +598,10 @@ function renderWebSearch() {
   });
   const base = ws.base_url || "…";
   document.getElementById("ws-hint-url").textContent = base + "/mega/search";
+  document.getElementById("ws-mr-limit").value = ws.map_reduce_context_limit ?? 16000;
+  document.getElementById("ws-mr-call-limit").value = ws.map_reduce_call_limit ?? 0;
+  document.getElementById("ws-mr-chunk").value = ws.map_reduce_chunk_size ?? 4000;
+  document.getElementById("ws-mr-reduce").classList.toggle("off", ws.map_reduce_reduce === false);
 }
 
 function renderWebFetch() {
@@ -553,6 +614,7 @@ function renderWebFetch() {
 
 document.getElementById("ws-enabled").onclick = function () { this.classList.toggle("off"); };
 document.getElementById("ws-filter").onclick = function () { this.classList.toggle("off"); };
+document.getElementById("ws-mr-reduce").onclick = function () { this.classList.toggle("off"); };
 
 document.getElementById("ws-save-btn").onclick = async () => {
   const baseUrl = document.getElementById("ws-url").value.trim();
@@ -561,6 +623,14 @@ document.getElementById("ws-save-btn").onclick = async () => {
   const limit = parseInt(document.getElementById("ws-limit").value, 10);
   if (isNaN(extract) || extract < 0 || extract > 5) { toast("Extract must be between 0 and 5", true); return; }
   if (isNaN(limit) || limit < 1 || limit > 100) { toast("Limit must be between 1 and 100", true); return; }
+  const maxSearches = parseInt(document.getElementById("ws-max-searches").value, 10);
+  if (isNaN(maxSearches) || maxSearches < 0) { toast("Max searches must be 0 or greater", true); return; }
+  const mrLimit = parseInt(document.getElementById("ws-mr-limit").value, 10);
+  const mrCallLimit = parseInt(document.getElementById("ws-mr-call-limit").value, 10);
+  const mrChunk = parseInt(document.getElementById("ws-mr-chunk").value, 10);
+  if (isNaN(mrLimit) || mrLimit < 1000) { toast("Trigger limit must be at least 1000", true); return; }
+  if (isNaN(mrCallLimit) || mrCallLimit < 0) { toast("Per-call limit must be 0 or greater", true); return; }
+  if (isNaN(mrChunk) || mrChunk < 500) { toast("Chunk size must be at least 500", true); return; }
   const engines = Array.from(document.querySelectorAll("#ws-engines-group input[type=checkbox]"))
     .filter((cb) => cb.checked).map((cb) => cb.value);
   const payload = {
@@ -573,6 +643,11 @@ document.getElementById("ws-save-btn").onclick = async () => {
     filter: !document.getElementById("ws-filter").classList.contains("off"),
     mode: document.getElementById("ws-mode").value,
     engines,
+    max_searches: maxSearches,
+    map_reduce_context_limit: mrLimit,
+    map_reduce_call_limit: mrCallLimit,
+    map_reduce_chunk_size: mrChunk,
+    map_reduce_reduce: !document.getElementById("ws-mr-reduce").classList.contains("off"),
   };
   try {
     CONFIG = await apiPut("config/web_search", payload);
@@ -622,6 +697,7 @@ function renderConfigCards() {
       </div>
       <div class="ep-body">
         <div class="kv"><span class="k">Base URL</span><span class="v">${esc(ep.base_url)}</span></div>
+        <div class="kv"><span class="k">Protocol</span><span class="v"><span class="tag ${ep.protocol === "anthropic" ? "route" : "model"}">${esc(ep.protocol || "openai")}</span></span></div>
         <div class="kv"><span class="k">API key</span><span class="v">${esc(ep.api_key_masked) || "—"}</span></div>
         <div class="kv"><span class="k">Models</span><span class="v">${ep.models.map((m) => '<span class="tag model">' + esc(m) + "</span>").join(" ")}</span></div>
         <div class="kv"><span class="k">Aliases</span><span class="v">${mapHtml(ep.aliases)}</span></div>
@@ -644,6 +720,7 @@ async function persistConfig() {
       log: ep.log,
       enabled: ep.enabled,
       max_models: ep.max_models || 0,
+      protocol: ep.protocol || "openai",
     })),
   };
   CONFIG = await apiPut("config", payload);
@@ -722,7 +799,7 @@ document.getElementById("fe-models-input").addEventListener("keydown", (e) => {
 function openEditor(i) {
   editingIndex = i;
   const ep = i === null
-    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true, max_models: 0 }
+    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true, max_models: 0, protocol: "openai" }
     : CONFIG.endpoints[i];
   document.getElementById("modal-title").textContent = i === null ? "Add endpoint" : "Edit endpoint — " + ep.name;
   document.getElementById("fe-name").value = ep.name;
@@ -735,6 +812,7 @@ function openEditor(i) {
   document.getElementById("fe-enabled").classList.toggle("off", !ep.enabled);
   document.getElementById("fe-log").classList.toggle("off", !ep.log);
   document.getElementById("fe-max-models").value = ep.max_models || 0;
+  document.getElementById("fe-protocol").value = ep.protocol === "anthropic" ? "anthropic" : "openai";
   modelChips = [...ep.models];
   renderChips();
   document.getElementById("fe-aliases").innerHTML = "";
@@ -785,6 +863,7 @@ document.getElementById("modal-apply").onclick = async () => {
     log: !document.getElementById("fe-log").classList.contains("off"),
     enabled: !document.getElementById("fe-enabled").classList.contains("off"),
     max_models: parseInt(document.getElementById("fe-max-models").value, 10) || 0,
+    protocol: document.getElementById("fe-protocol").value === "anthropic" ? "anthropic" : "openai",
   };
   if (editingIndex === null) CONFIG.endpoints.push(ep);
   else CONFIG.endpoints[editingIndex] = ep;

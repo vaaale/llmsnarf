@@ -71,3 +71,7 @@ class ConfigService:
                 raise ConfigValidationError(f"Endpoint '{endpoint.name}': base_url is required")
             if not endpoint.models:
                 raise ConfigValidationError(f"Endpoint '{endpoint.name}': at least one model is required")
+            if endpoint.protocol not in ("openai", "anthropic"):
+                raise ConfigValidationError(
+                    f"Endpoint '{endpoint.name}': protocol must be 'openai' or 'anthropic'"
+                )

@@ -86,6 +86,7 @@ class FSTraceRepository(TraceRepository):
             message_count=message_count,
             error=str(error) if error is not None else None,
             correlation_id=self._correlation_id_for(request_path, request_data),
+            parent_trace_id=request_data.get("parent_trace_id"),
         )
 
     def _request_path(self, trace_id: str) -> Path | None:
@@ -167,22 +168,15 @@ class FSTraceRepository(TraceRepository):
                 break
         return results
 
-    def get_trace(self, trace_id: str) -> TraceDetail | None:
-        if "/" in trace_id or "\\" in trace_id or ".." in trace_id:
-            return None
-        request_path = self._request_path(trace_id)
-        if request_path is None:
-            return None
+    def _build_detail_from_path(self, request_path: Path) -> TraceDetail | None:
         summary = self._build_summary_from_path(request_path)
         if summary is None:
             return None
-
         request_data = self._read_json(request_path) or {}
+        trace_id = request_path.name[: -len("_request.json")]
         response_data = self._read_json(request_path.with_name(f"{trace_id}_response.json")) or {}
-
         chunks = response_data.get("chunks")
         chunks = [str(c) for c in chunks] if isinstance(chunks, list) else []
-
         return TraceDetail(
             summary=summary,
             request_headers=request_data.get("headers") or {},
@@ -191,3 +185,39 @@ class FSTraceRepository(TraceRepository):
             response_body=response_data.get("body"),
             response_chunks=chunks,
         )
+
+    def _find_children(self, request_path: Path, parent_trace_id: str) -> list[TraceDetail]:
+        children: list[TraceDetail] = []
+        for candidate in request_path.parent.glob("*_request.json"):
+            if candidate == request_path:
+                continue
+            data = self._read_json(candidate)
+            if data is None or data.get("parent_trace_id") != parent_trace_id:
+                continue
+            detail = self._build_detail_from_path(candidate)
+            if detail is not None:
+                children.append(detail)
+        children.sort(key=lambda d: d.summary.timestamp)
+        return children
+
+    def get_trace(self, trace_id: str) -> TraceDetail | None:
+        if "/" in trace_id or "\\" in trace_id or ".." in trace_id:
+            return None
+        request_path = self._request_path(trace_id)
+        if request_path is None:
+            return None
+        detail = self._build_detail_from_path(request_path)
+        if detail is None:
+            return None
+        children = self._find_children(request_path, trace_id)
+        if children:
+            detail = TraceDetail(
+                summary=detail.summary,
+                request_headers=detail.request_headers,
+                request_payload=detail.request_payload,
+                response_headers=detail.response_headers,
+                response_body=detail.response_body,
+                response_chunks=detail.response_chunks,
+                children=children,
+            )
+        return detail

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json as _json
 import logging
+import re as _re
 
 import httpx
 
@@ -54,6 +56,50 @@ WEB_FETCH_TOOL_DEFINITION = {
 }
 
 
+def _extract_sources(text: str, fmt: str) -> list[dict]:
+    if fmt == "ndjson":
+        sources: list[dict] = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = _json.loads(line)
+                if isinstance(obj, dict) and "url" in obj:
+                    entry: dict = {"url": obj["url"]}
+                    if obj.get("title"):
+                        entry["title"] = obj["title"]
+                    sources.append(entry)
+            except Exception:
+                pass
+        return sources
+    if fmt == "json":
+        try:
+            data = _json.loads(text)
+            if isinstance(data, list):
+                result: list[dict] = []
+                for item in data:
+                    if isinstance(item, dict) and "url" in item:
+                        entry = {"url": item["url"]}
+                        if item.get("title"):
+                            entry["title"] = item["title"]
+                        result.append(entry)
+                return result
+        except Exception:
+            pass
+    # markdown / text: extract [title](url) links, deduplicated
+    seen: set[str] = set()
+    sources = []
+    for title, url in _re.findall(r'\[([^\]]*)\]\((https?://[^)]+)\)', text):
+        if url not in seen:
+            seen.add(url)
+            entry = {"url": url}
+            if title:
+                entry["title"] = title
+            sources.append(entry)
+    return sources
+
+
 class WebSearchService:
     def __init__(self, config_repository: LLMProxyConfigRepository, logger: logging.Logger):
         self._config_repository = config_repository
@@ -68,7 +114,7 @@ class WebSearchService:
     def get_config(self) -> WebSearchConfig:
         return self.get_search_config()
 
-    async def search(self, query: str) -> str:
+    async def search(self, query: str) -> tuple[str, list[dict]]:
         config = self.get_search_config()
         params: dict = {
             "text": query,
@@ -88,15 +134,17 @@ class WebSearchService:
                 response = await client.get(url, params=params)
         except Exception as exc:
             self._logger.warning("web_search failed query=%r error=%s", query, exc)
-            return f"Web search failed: {exc}"
+            return f"Web search failed: {exc}", []
 
         if response.status_code != 200:
             self._logger.warning(
                 "web_search error query=%r status=%s body=%s", query, response.status_code, response.text[:500]
             )
-            return f"Web search failed with status {response.status_code}: {response.text[:500]}"
+            return f"Web search failed with status {response.status_code}: {response.text[:500]}", []
 
-        return response.text
+        content = response.text
+        sources = _extract_sources(content, config.format)
+        return content, sources
 
     async def fetch(self, url: str) -> str:
         config = self.get_fetch_config()
