@@ -428,7 +428,13 @@
                 <label>Max searches / request <span class="muted" style="font-weight:400;font-size:11px">— 0 = unlimited</span></label>
                 <input type="number" id="ws-max-searches" min="0" step="1">
               </div>
-              <div class="field" style="margin-bottom:0"></div>
+              <div class="field" style="margin-bottom:0">
+                <label>Agent loop</label>
+                <div class="switch-field" style="padding-top:8px">
+                  <div class="toggle" id="ws-agent-loop"></div>
+                  <span class="muted" style="font-size:12px">Feed results back to the model (off = one search round, raw results)</span>
+                </div>
+              </div>
             </div>
             <div class="fields-row" style="margin-bottom:12px">
               <div class="field" style="margin-bottom:0">

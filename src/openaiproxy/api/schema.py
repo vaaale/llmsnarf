@@ -15,6 +15,7 @@ class WebSearchSchema(BaseModel):
     filter: bool = False
     mode: Literal["any", "fast", "balanced"] = "balanced"
     engines: list[str] = Field(default_factory=list)
+    agent_loop: bool = True
     max_searches: int = Field(default=3, ge=0)
     map_reduce_context_limit: int = Field(default=16000, ge=1000)
     map_reduce_call_limit: int = Field(default=0, ge=0)

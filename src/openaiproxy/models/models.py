@@ -28,6 +28,7 @@ class WebSearchConfig:
     filter: bool = False
     mode: str = "balanced"  # any | fast | balanced
     engines: list[str] = field(default_factory=list)  # bing, google, yandex, baidu, duckduckgo, ecosia
+    agent_loop: bool = True  # feed results back to the model; False = one search round, raw results returned
     max_searches: int = 3  # max total search/fetch calls the proxy runs per client request; <=0 = unlimited
     map_reduce_context_limit: int = 16000  # approximate token threshold to trigger map-reduce
     map_reduce_call_limit: int = 0  # per-call token budget for map/reduce LLM calls; 0 = same as context_limit

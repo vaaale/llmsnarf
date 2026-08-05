@@ -590,6 +590,7 @@ function renderWebSearch() {
   document.getElementById("ws-extract-mode").value = ws.extract_mode || "auto";
   document.getElementById("ws-limit").value = ws.limit ?? 25;
   document.getElementById("ws-max-searches").value = ws.max_searches ?? 3;
+  document.getElementById("ws-agent-loop").classList.toggle("off", ws.agent_loop === false);
   document.getElementById("ws-filter").classList.toggle("off", !ws.filter);
   document.getElementById("ws-mode").value = ws.mode || "balanced";
   const activeEngines = new Set(ws.engines || []);
@@ -613,6 +614,7 @@ function renderWebFetch() {
 }
 
 document.getElementById("ws-enabled").onclick = function () { this.classList.toggle("off"); };
+document.getElementById("ws-agent-loop").onclick = function () { this.classList.toggle("off"); };
 document.getElementById("ws-filter").onclick = function () { this.classList.toggle("off"); };
 document.getElementById("ws-mr-reduce").onclick = function () { this.classList.toggle("off"); };
 
@@ -643,6 +645,7 @@ document.getElementById("ws-save-btn").onclick = async () => {
     filter: !document.getElementById("ws-filter").classList.contains("off"),
     mode: document.getElementById("ws-mode").value,
     engines,
+    agent_loop: !document.getElementById("ws-agent-loop").classList.contains("off"),
     max_searches: maxSearches,
     map_reduce_context_limit: mrLimit,
     map_reduce_call_limit: mrCallLimit,

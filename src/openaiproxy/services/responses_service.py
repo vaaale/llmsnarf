@@ -634,6 +634,7 @@ class ResponsesService:
         incomplete_reason: str | None = None
         all_sources: list[dict] = []
         max_searches = web_search_config.max_searches if web_search_config is not None else 0
+        agent_loop = web_search_config.agent_loop if web_search_config is not None else True
         searches_done = 0
 
         async with httpx.AsyncClient(timeout=3000.0) as client:
@@ -719,6 +720,7 @@ class ResponsesService:
 
                 if web_search_calls and not client_calls:
                     chat_payload["messages"].append(message)
+                    raw_results: list[str] = []
                     for tool_call in web_search_calls:
                         if max_searches > 0 and searches_done >= max_searches:
                             chat_payload["messages"].append(
@@ -750,7 +752,9 @@ class ResponsesService:
                                     "action": {"type": "search", "query": query},
                                 }
                             )
-                        if web_search_config is not None:
+                        if not agent_loop:
+                            raw_results.append(tool_result)
+                        if agent_loop and web_search_config is not None:
                             current_tokens = _estimate_tokens(json.dumps(chat_payload))
                             if current_tokens + _estimate_tokens(tool_result) > web_search_config.map_reduce_context_limit:
                                 self._logger.info(
@@ -773,13 +777,30 @@ class ResponsesService:
                                     correlation_id=correlation_id,
                                     parent_trace_id=base_filename,
                                 )
-                        if web_search_config is not None:
+                        if agent_loop and web_search_config is not None:
                             remaining = _effective_call_limit(web_search_config) - _estimate_tokens(json.dumps(chat_payload))
                             if remaining > 0 and _estimate_tokens(tool_result) > remaining:
                                 tool_result = tool_result[: remaining * 3]
                         chat_payload["messages"].append(
                             {"role": "tool", "tool_call_id": tool_call.get("id"), "content": tool_result}
                         )
+                    if not agent_loop:
+                        output.append(
+                            {
+                                "type": "message",
+                                "id": _new_id("msg"),
+                                "role": "assistant",
+                                "status": "completed",
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": "\n\n".join(r for r in raw_results if r),
+                                        "annotations": [],
+                                    }
+                                ],
+                            }
+                        )
+                        break
                     if max_searches > 0 and searches_done >= max_searches:
                         _strip_tools(chat_payload)
                     else:
@@ -879,6 +900,7 @@ class ResponsesService:
 
         all_sources: list[dict] = []
         max_searches = web_search_config.max_searches if web_search_config is not None else 0
+        agent_loop = web_search_config.agent_loop if web_search_config is not None else True
         searches_done = 0
 
         try:
@@ -1110,6 +1132,7 @@ class ResponsesService:
                         chat_payload["messages"].append(
                             {"role": "assistant", "content": final_text or None, "tool_calls": tool_calls}
                         )
+                        raw_results: list[str] = []
                         for tool_call in web_search_calls:
                             if max_searches > 0 and searches_done >= max_searches:
                                 chat_payload["messages"].append(
@@ -1139,7 +1162,9 @@ class ResponsesService:
                                 result, sources = await self._web_search_service.search(query)
                                 all_sources.extend(sources)
                                 done_action = {"type": "search", "query": query}
-                            if web_search_config is not None:
+                            if not agent_loop:
+                                raw_results.append(result)
+                            if agent_loop and web_search_config is not None:
                                 current_tokens = _estimate_tokens(json.dumps(chat_payload))
                                 if current_tokens + _estimate_tokens(result) > web_search_config.map_reduce_context_limit:
                                     self._logger.info(
@@ -1162,7 +1187,7 @@ class ResponsesService:
                                         correlation_id=correlation_id,
                                         parent_trace_id=base_filename,
                                     )
-                            if web_search_config is not None:
+                            if agent_loop and web_search_config is not None:
                                 remaining = _effective_call_limit(web_search_config) - _estimate_tokens(json.dumps(chat_payload))
                                 if remaining > 0 and _estimate_tokens(result) > remaining:
                                     result = result[: remaining * 3]
@@ -1183,6 +1208,66 @@ class ResponsesService:
                             )
                             snapshot["output"].append(done_ws)
                             output_index += 1
+                        if not agent_loop:
+                            raw_text = "\n\n".join(r for r in raw_results if r)
+                            msg_item = {
+                                "id": _new_id("msg"),
+                                "type": "message",
+                                "status": "in_progress",
+                                "role": "assistant",
+                                "content": [],
+                            }
+                            yield event(
+                                "response.output_item.added", {"output_index": output_index, "item": msg_item}
+                            )
+                            yield event(
+                                "response.content_part.added",
+                                {
+                                    "item_id": msg_item["id"],
+                                    "output_index": output_index,
+                                    "content_index": 0,
+                                    "part": {"type": "output_text", "text": "", "annotations": []},
+                                },
+                            )
+                            if raw_text:
+                                yield event(
+                                    "response.output_text.delta",
+                                    {
+                                        "item_id": msg_item["id"],
+                                        "output_index": output_index,
+                                        "content_index": 0,
+                                        "delta": raw_text,
+                                    },
+                                )
+                            part = {"type": "output_text", "text": raw_text, "annotations": []}
+                            yield event(
+                                "response.output_text.done",
+                                {
+                                    "item_id": msg_item["id"],
+                                    "output_index": output_index,
+                                    "content_index": 0,
+                                    "text": raw_text,
+                                },
+                            )
+                            yield event(
+                                "response.content_part.done",
+                                {
+                                    "item_id": msg_item["id"],
+                                    "output_index": output_index,
+                                    "content_index": 0,
+                                    "part": part,
+                                },
+                            )
+                            done_msg = {**msg_item, "status": "completed", "content": [part]}
+                            yield event(
+                                "response.output_item.done", {"output_index": output_index, "item": done_msg}
+                            )
+                            snapshot["output"].append(done_msg)
+                            output_index += 1
+                            snapshot["usage"] = usage
+                            snapshot["status"] = "completed"
+                            yield event("response.completed", {"response": snapshot})
+                            return
                         if max_searches > 0 and searches_done >= max_searches:
                             _strip_tools(chat_payload)
                         else:
