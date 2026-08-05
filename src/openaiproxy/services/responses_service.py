@@ -443,6 +443,7 @@ class ResponsesService:
                                 "body": resp.text,
                             },
                             correlation_id,
+                            endpoint_path=endpoint,
                         )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -454,6 +455,7 @@ class ResponsesService:
                         self._trace_dir, base_fn,
                         {"timestamp": datetime.now().isoformat(), "error": str(exc)},
                         correlation_id,
+                        endpoint_path=endpoint,
                     )
 
         async with anyio.create_task_group() as tg:
@@ -489,6 +491,7 @@ class ResponsesService:
                             "body": resp.text,
                         },
                         correlation_id,
+                        endpoint_path="/responses/map-reduce/final",
                     )
                 if resp.status_code == 200:
                     data = resp.json()
@@ -500,12 +503,15 @@ class ResponsesService:
                     self._trace_dir, reduce_fn,
                     {"timestamp": datetime.now().isoformat(), "error": str(exc)},
                     correlation_id,
+                    endpoint_path="/responses/map-reduce/final",
                 )
         return combined
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
         config = self._config_repository.load()
-        endpoints = [endpoint for endpoint in config.endpoints if endpoint.enabled]
+        endpoints = [
+            endpoint for endpoint in config.endpoints if endpoint.enabled and endpoint.mode != "local"
+        ]
 
         if model:
             for endpoint in endpoints:
@@ -611,7 +617,9 @@ class ResponsesService:
         self, should_log: bool, base_filename: str, response_data: dict, correlation_id: str | None = None
     ) -> None:
         if should_log:
-            await save_response_trace(self._trace_dir, base_filename, response_data, correlation_id)
+            await save_response_trace(
+                self._trace_dir, base_filename, response_data, correlation_id, endpoint_path="/responses"
+            )
 
     async def _complete(
         self,

@@ -86,8 +86,10 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 enabled = entry.get("enabled")
                 max_models = entry.get("max_models")
                 protocol = entry.get("protocol")
+                mode = str(entry.get("mode") or "remote")
 
-                if not base_url or not models:
+                # local endpoints serve models in-process and need no base_url
+                if not models or (not base_url and mode != "local"):
                     continue
 
                 if isinstance(models, str):
@@ -106,7 +108,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 endpoints.append(
                     EndpointConfig(
                         name=str(name),
-                        base_url=_normalize_base_url(str(base_url)),
+                        base_url=_normalize_base_url(str(base_url)) if base_url else "",
                         api_key=str(api_key) if api_key else "",
                         models=[str(m) for m in models],
                         aliases=aliases,
@@ -115,6 +117,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                         enabled=bool(True if enabled is None else enabled),
                         max_models=int(max_models) if max_models is not None else 0,
                         protocol=str(protocol) if protocol else "openai",
+                        mode=mode,
                     )
                 )
 
@@ -147,6 +150,8 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 entry["max_models"] = endpoint.max_models
             if endpoint.protocol and endpoint.protocol != "openai":
                 entry["protocol"] = endpoint.protocol
+            if endpoint.mode and endpoint.mode != "remote":
+                entry["mode"] = endpoint.mode
             endpoints[endpoint.name] = entry
 
         llmproxy: dict = {}

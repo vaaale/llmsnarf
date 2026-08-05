@@ -66,7 +66,9 @@ class AnthropicService:
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
         config = self._config_repository.load()
-        endpoints = [endpoint for endpoint in config.endpoints if endpoint.enabled]
+        endpoints = [
+            endpoint for endpoint in config.endpoints if endpoint.enabled and endpoint.mode != "local"
+        ]
 
         if model:
             for endpoint in endpoints:
@@ -152,7 +154,9 @@ class AnthropicService:
         self, should_log: bool, base_filename: str, response_data: dict, correlation_id: str | None
     ) -> None:
         if should_log:
-            await save_response_trace(self._trace_dir, base_filename, response_data, correlation_id)
+            await save_response_trace(
+                self._trace_dir, base_filename, response_data, correlation_id, endpoint_path="/messages"
+            )
 
     # ------------------------------------------------------------------
     # Anthropic client -> Anthropic upstream (native passthrough)

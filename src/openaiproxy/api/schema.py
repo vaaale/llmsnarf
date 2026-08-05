@@ -31,7 +31,7 @@ class WebFetchSchema(BaseModel):
 
 class EndpointSchema(BaseModel):
     name: str
-    base_url: str
+    base_url: str = ""
     api_key: str | None = Field(
         default=None,
         description="New API key. Null or empty means keep the existing key.",
@@ -45,6 +45,10 @@ class EndpointSchema(BaseModel):
     max_models: int = Field(default=0, description="Max loaded models on the endpoint. Less than 1 disables tracking.")
     protocol: Literal["openai", "anthropic"] = Field(
         default="openai", description="Wire format of the upstream endpoint."
+    )
+    mode: Literal["remote", "local"] = Field(
+        default="remote",
+        description="remote = forward requests to base_url; local = serve embedding models in-process.",
     )
 
 

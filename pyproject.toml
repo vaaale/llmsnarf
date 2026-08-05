@@ -11,6 +11,11 @@ dependencies = [
   "uvicorn>=0.32.0",
 ]
 
+[project.optional-dependencies]
+local-embeddings = [
+  "sentence-transformers>=3.0",
+]
+
 [dependency-groups]
 dev = [
   "pytest>=8.0",

@@ -571,6 +571,14 @@
         </div>
       </div>
       <div class="field">
+        <label>Mode</label>
+        <select id="fe-mode">
+          <option value="remote">Remote — forward to an upstream endpoint</option>
+          <option value="local">Local — serve embedding models in-process (Transformers)</option>
+        </select>
+        <div class="hint">Local endpoints load models with sentence-transformers and answer <code>/v1/embeddings</code> directly.</div>
+      </div>
+      <div class="field">
         <label>Base URL</label>
         <input type="text" id="fe-url" placeholder="https://api.example.com/v1">
       </div>

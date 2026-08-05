@@ -67,7 +67,11 @@ class ConfigService:
             if endpoint.name in seen:
                 raise ConfigValidationError(f"Duplicate endpoint name: {endpoint.name}")
             seen.add(endpoint.name)
-            if not endpoint.base_url:
+            if endpoint.mode not in ("remote", "local"):
+                raise ConfigValidationError(
+                    f"Endpoint '{endpoint.name}': mode must be 'remote' or 'local'"
+                )
+            if not endpoint.base_url and endpoint.mode != "local":
                 raise ConfigValidationError(f"Endpoint '{endpoint.name}': base_url is required")
             if not endpoint.models:
                 raise ConfigValidationError(f"Endpoint '{endpoint.name}': at least one model is required")

@@ -15,6 +15,7 @@ from openaiproxy.logging_config import configure_logging
 from openaiproxy.middleware.exception_logging import ExceptionLoggingMiddleware
 from openaiproxy.services.anthropic_service import AnthropicService
 from openaiproxy.services.config_service import ConfigService
+from openaiproxy.services.embeddings_service import EmbeddingsService
 from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.proxy_service import ProxyService
@@ -62,6 +63,13 @@ def create_app(
         ledger_service=ledger_service,
     )
     app.state.anthropic_service = AnthropicService(
+        config_repository=config_repository,
+        trace_dir=Path(trace_dir),
+        logger=logger,
+        model_tracker=model_tracker,
+        ledger_service=ledger_service,
+    )
+    app.state.embeddings_service = EmbeddingsService(
         config_repository=config_repository,
         trace_dir=Path(trace_dir),
         logger=logger,

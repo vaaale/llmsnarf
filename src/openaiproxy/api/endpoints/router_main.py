@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import StreamingResponse
 
 from openaiproxy.services.anthropic_service import AnthropicService
+from openaiproxy.services.embeddings_service import EmbeddingsService
 from openaiproxy.services.proxy_service import ProxyService
 from openaiproxy.services.responses_service import ResponsesService
 
@@ -25,6 +26,10 @@ def get_responses_service(request: Request) -> ResponsesService:
 
 def get_anthropic_service(request: Request) -> AnthropicService:
     return request.app.state.anthropic_service
+
+
+def get_embeddings_service(request: Request) -> EmbeddingsService:
+    return request.app.state.embeddings_service
 
 
 @router.post("/v1/chat/completions")
@@ -95,6 +100,33 @@ async def proxy_anthropic_messages(
     )
 
 
+@router.post("/v1/embeddings")
+async def proxy_embeddings(
+    request: Request, embeddings_service: EmbeddingsService = Depends(get_embeddings_service)
+):
+    body = await request.body()
+    headers = dict(request.headers)
+
+    logger.info(
+        "incoming_request method=%s path=/embeddings client=%s body_bytes=%d",
+        request.method,
+        request.client.host if request.client else "unknown",
+        len(body),
+    )
+
+    result = await embeddings_service.handle(body=body, headers=headers)
+
+    status_code = result["status_code"]
+    if status_code >= 400:
+        logger.warning("response_status method=%s path=/embeddings status=%s", request.method, status_code)
+
+    return Response(
+        content=result["content"],
+        status_code=status_code,
+        headers=result.get("headers"),
+    )
+
+
 @router.api_route(
     "/v1/{endpoint_path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
@@ -149,6 +181,7 @@ async def root():
             "/v1/completions",
             "/v1/responses",
             "/v1/messages",
+            "/v1/embeddings",
             "/v1/{endpoint_path:path}",
         ],
     }

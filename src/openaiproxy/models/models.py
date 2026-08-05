@@ -15,6 +15,7 @@ class EndpointConfig:
     enabled: bool = True
     max_models: int = 0  # max loaded models on the endpoint; < 1 disables tracking
     protocol: str = "openai"  # wire format of the upstream: openai | anthropic
+    mode: str = "remote"  # remote = forward requests; local = serve embeddings in-process (no base_url needed)
 
 
 @dataclass(frozen=True)

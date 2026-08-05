@@ -96,7 +96,7 @@ def test_models_endpoint_not_traced_or_ledgered(tmp_path: Path, monkeypatch):
     response = client.get("/v1/models")
     assert response.status_code == 200
 
-    assert not list(trace_dir.glob("*_request.json"))
+    assert not list(trace_dir.rglob("*_request.json"))
     assert not (trace_dir / "validation_ledger.ndjson").exists()
 
     response = client.post(
@@ -104,4 +104,4 @@ def test_models_endpoint_not_traced_or_ledgered(tmp_path: Path, monkeypatch):
         json={"model": "gpt-5.1", "messages": [{"role": "user", "content": "hi"}]},
     )
     assert response.status_code == 200
-    assert len(list(trace_dir.glob("*_request.json"))) == 1
+    assert len(list((trace_dir / "completion").glob("*_request.json"))) == 1

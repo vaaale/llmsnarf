@@ -34,9 +34,12 @@ class FSTraceRepository(TraceRepository):
             return None
 
     def _correlation_id_for(self, request_path: Path, request_data: dict[str, Any]) -> str | None:
-        stored = request_data.get("correlation_id")
-        if isinstance(stored, str) and stored:
-            return stored
+        # Traces that persist the correlation id (possibly null) are authoritative;
+        # the directory name can no longer be trusted now that traces are nested
+        # under per-API folders (traces/completion, traces/responses, ...).
+        if "correlation_id" in request_data:
+            stored = request_data.get("correlation_id")
+            return stored if isinstance(stored, str) and stored else None
         # Fallback for traces written before correlation ids were persisted:
         # infer it from the parent directory name (unless it is the trace root).
         parent = request_path.parent

@@ -56,6 +56,7 @@ def _endpoint_to_schema(endpoint: EndpointConfig) -> EndpointSchema:
         enabled=endpoint.enabled,
         max_models=endpoint.max_models,
         protocol=endpoint.protocol if endpoint.protocol in ("openai", "anthropic") else "openai",
+        mode=endpoint.mode if endpoint.mode in ("remote", "local") else "remote",
     )
 
 
@@ -71,6 +72,7 @@ def _schema_to_endpoint(schema: EndpointSchema) -> EndpointConfig:
         enabled=schema.enabled,
         max_models=schema.max_models,
         protocol=schema.protocol,
+        mode=schema.mode,
     )
 
 

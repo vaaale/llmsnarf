@@ -699,7 +699,8 @@ function renderConfigCards() {
         </div>
       </div>
       <div class="ep-body">
-        <div class="kv"><span class="k">Base URL</span><span class="v">${esc(ep.base_url)}</span></div>
+        <div class="kv"><span class="k">Mode</span><span class="v"><span class="tag ${ep.mode === "local" ? "route" : "ok"}">${ep.mode === "local" ? "local (in-process)" : "remote"}</span></span></div>
+        <div class="kv"><span class="k">Base URL</span><span class="v">${ep.mode === "local" ? '<span class="muted">—</span>' : esc(ep.base_url)}</span></div>
         <div class="kv"><span class="k">Protocol</span><span class="v"><span class="tag ${ep.protocol === "anthropic" ? "route" : "model"}">${esc(ep.protocol || "openai")}</span></span></div>
         <div class="kv"><span class="k">API key</span><span class="v">${esc(ep.api_key_masked) || "—"}</span></div>
         <div class="kv"><span class="k">Models</span><span class="v">${ep.models.map((m) => '<span class="tag model">' + esc(m) + "</span>").join(" ")}</span></div>
@@ -724,6 +725,7 @@ async function persistConfig() {
       enabled: ep.enabled,
       max_models: ep.max_models || 0,
       protocol: ep.protocol || "openai",
+      mode: ep.mode || "remote",
     })),
   };
   CONFIG = await apiPut("config", payload);
@@ -802,7 +804,7 @@ document.getElementById("fe-models-input").addEventListener("keydown", (e) => {
 function openEditor(i) {
   editingIndex = i;
   const ep = i === null
-    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true, max_models: 0, protocol: "openai" }
+    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true, max_models: 0, protocol: "openai", mode: "remote" }
     : CONFIG.endpoints[i];
   document.getElementById("modal-title").textContent = i === null ? "Add endpoint" : "Edit endpoint — " + ep.name;
   document.getElementById("fe-name").value = ep.name;
@@ -816,6 +818,8 @@ function openEditor(i) {
   document.getElementById("fe-log").classList.toggle("off", !ep.log);
   document.getElementById("fe-max-models").value = ep.max_models || 0;
   document.getElementById("fe-protocol").value = ep.protocol === "anthropic" ? "anthropic" : "openai";
+  document.getElementById("fe-mode").value = ep.mode === "local" ? "local" : "remote";
+  syncModeFields();
   modelChips = [...ep.models];
   renderChips();
   document.getElementById("fe-aliases").innerHTML = "";
@@ -846,10 +850,22 @@ function collectMap(containerId) {
   return out;
 }
 
+function syncModeFields() {
+  const local = document.getElementById("fe-mode").value === "local";
+  document.getElementById("fe-url").disabled = local;
+  document.getElementById("fe-protocol").disabled = local;
+  document.getElementById("fe-url").placeholder = local
+    ? "not used — models are loaded in-process"
+    : "https://api.example.com/v1";
+}
+document.getElementById("fe-mode").onchange = syncModeFields;
+
 document.getElementById("modal-apply").onclick = async () => {
   const name = document.getElementById("fe-name").value.trim();
+  const mode = document.getElementById("fe-mode").value === "local" ? "local" : "remote";
   const url = document.getElementById("fe-url").value.trim();
-  if (!name || !url) { toast("Endpoint name and Base URL are required", true); return; }
+  if (!name) { toast("Endpoint name is required", true); return; }
+  if (mode === "remote" && !url) { toast("Base URL is required for remote endpoints", true); return; }
   if (!modelChips.length) { toast("At least one model (or *) is required", true); return; }
   const clash = CONFIG.endpoints.some((ep, i) => ep.name === name && i !== editingIndex);
   if (clash) { toast(`An endpoint named "${name}" already exists`, true); return; }
@@ -867,6 +883,7 @@ document.getElementById("modal-apply").onclick = async () => {
     enabled: !document.getElementById("fe-enabled").classList.contains("off"),
     max_models: parseInt(document.getElementById("fe-max-models").value, 10) || 0,
     protocol: document.getElementById("fe-protocol").value === "anthropic" ? "anthropic" : "openai",
+    mode,
   };
   if (editingIndex === null) CONFIG.endpoints.push(ep);
   else CONFIG.endpoints[editingIndex] = ep;

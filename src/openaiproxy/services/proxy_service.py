@@ -13,6 +13,7 @@ from fastapi import HTTPException
 
 from openaiproxy.interface.repository import LLMProxyConfigRepository
 from openaiproxy.models.models import EndpointConfig
+from openaiproxy.models.trace_models import trace_category
 from openaiproxy.services.anthropic_translation import (
     AnthropicToChatStream,
     anthropic_response_to_chat,
@@ -62,15 +63,19 @@ def extract_correlation_id(headers: dict[str, str]) -> str | None:
     return sanitized or None
 
 
-def trace_subdir(trace_dir: Path, correlation_id: str | None) -> Path:
+def trace_subdir(trace_dir: Path, correlation_id: str | None, endpoint_path: str | None = None) -> Path:
     """Resolve the directory a trace should be written to.
 
-    When a correlation id is present the trace is nested under a directory
-    named after it so all messages of the same thread are grouped together.
+    Traces are grouped per inbound API (traces/completion, traces/responses,
+    ...). When a correlation id is present the trace is nested one level
+    deeper so all messages of the same thread are grouped together.
     """
+    target = trace_dir
+    if endpoint_path:
+        target = target / trace_category(endpoint_path)
     if correlation_id:
-        return trace_dir / correlation_id
-    return trace_dir
+        target = target / correlation_id
+    return target
 
 
 _RESPONSE_FRAMING_HEADERS = {
@@ -100,7 +105,7 @@ async def save_request_trace(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     safe_api_key = sanitize_api_key_for_filename(api_key)
     base_filename = f"{safe_api_key}_{timestamp}"
-    target_dir = trace_subdir(trace_dir, correlation_id)
+    target_dir = trace_subdir(trace_dir, correlation_id, endpoint_path)
     target_dir.mkdir(parents=True, exist_ok=True)
     filename = target_dir / f"{base_filename}_request.json"
 
@@ -126,8 +131,9 @@ async def save_response_trace(
     base_filename: str,
     response_data: dict[str, Any],
     correlation_id: str | None = None,
+    endpoint_path: str | None = None,
 ) -> None:
-    target_dir = trace_subdir(trace_dir, correlation_id)
+    target_dir = trace_subdir(trace_dir, correlation_id, endpoint_path)
     target_dir.mkdir(parents=True, exist_ok=True)
     filename = target_dir / f"{base_filename}_response.json"
 
@@ -155,7 +161,9 @@ class ProxyService:
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
         config = self._config_repository.load()
-        endpoints = [endpoint for endpoint in config.endpoints if endpoint.enabled]
+        endpoints = [
+            endpoint for endpoint in config.endpoints if endpoint.enabled and endpoint.mode != "local"
+        ]
         if not endpoints:
             return None
 
@@ -183,9 +191,13 @@ class ProxyService:
         )
 
     async def _save_response(
-        self, base_filename: str, response_data: dict[str, Any], correlation_id: str | None = None
+        self,
+        base_filename: str,
+        response_data: dict[str, Any],
+        correlation_id: str | None = None,
+        endpoint_path: str | None = None,
     ) -> None:
-        await save_response_trace(self._trace_dir, base_filename, response_data, correlation_id)
+        await save_response_trace(self._trace_dir, base_filename, response_data, correlation_id, endpoint_path)
 
     async def substitute_role(self, payload: dict, endpoint_config: EndpointConfig) -> dict:
         substitutions = endpoint_config.substitute_role
@@ -334,7 +346,7 @@ class ProxyService:
                                 yield chunk
 
                             if should_log:
-                                await self._save_response(base_filename, response_data, correlation_id)
+                                await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
                             if self._ledger_service and base_filename:
                                 await self._ledger_service.validate_and_record(
                                     trace_id=base_filename,
@@ -357,7 +369,7 @@ class ProxyService:
                             "error": str(e),
                         }
                         if should_log:
-                            await self._save_response(base_filename, response_data, correlation_id)
+                            await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
                         yield error_msg.encode()
 
             return {
@@ -384,7 +396,7 @@ class ProxyService:
                     else response.text,
                 }
                 if should_log:
-                    await self._save_response(base_filename, response_data, correlation_id)
+                    await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
                 if self._ledger_service and base_filename:
                     body_json = response_data.get("body") if isinstance(response_data.get("body"), dict) else None
                     await self._ledger_service.validate_and_record(
@@ -422,7 +434,7 @@ class ProxyService:
                     "error": str(e),
                 }
                 if should_log:
-                    await self._save_response(base_filename, response_data, correlation_id)
+                    await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
 
                 return {
                     "type": "response",
@@ -476,6 +488,7 @@ class ProxyService:
                         base_filename,
                         {"timestamp": datetime.now().isoformat(), "error": str(exc)},
                         correlation_id,
+                        "/chat/completions",
                     )
                 return {
                     "type": "response",
@@ -504,6 +517,7 @@ class ProxyService:
                         "body": error,
                     },
                     correlation_id,
+                    "/chat/completions",
                 )
             return {
                 "type": "response",
@@ -538,6 +552,7 @@ class ProxyService:
                     "body": result,
                 },
                 correlation_id,
+                "/chat/completions",
             )
         if self._ledger_service and base_filename:
             await self._ledger_service.validate_and_record(
@@ -628,6 +643,7 @@ class ProxyService:
                         "chunks": chunks_log,
                     },
                     correlation_id,
+                    "/chat/completions",
                 )
             if self._ledger_service and base_filename:
                 await self._ledger_service.validate_and_record(
