@@ -9,6 +9,7 @@ dependencies = [
   "fastapi>=0.115.0",
   "pyyaml>=6.0.0",
   "uvicorn>=0.32.0",
+  "sentence-transformers>=5.7.0",
 ]
 
 [project.optional-dependencies]
