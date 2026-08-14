@@ -564,6 +564,8 @@ class ResponsesService:
         web_search_config = self._web_search_service.get_config()
         chat_tools, web_search_active = translate_tools(payload, web_search_config.enabled)
         chat_payload = build_chat_payload(payload, forwarded_model, chat_tools)
+        if endpoint.cache_prompt:
+            chat_payload["cache_prompt"] = True
 
         substitutions = endpoint.substitute_role or {}
         for message in chat_payload["messages"]:

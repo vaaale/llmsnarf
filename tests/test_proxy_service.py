@@ -25,7 +25,13 @@ def test_filter_response_headers_strips_framing_headers():
     }
 
 
-def _make_client(tmp_path: Path, monkeypatch, log: bool) -> TestClient:
+def _make_client(
+    tmp_path: Path,
+    monkeypatch,
+    log: bool,
+    cache_prompt: bool = False,
+    captured_requests: list | None = None,
+) -> TestClient:
     import httpx
 
     config_path = tmp_path / "llmproxy.yaml"
@@ -36,9 +42,12 @@ def _make_client(tmp_path: Path, monkeypatch, log: bool) -> TestClient:
         "      base_url: http://upstream.test/v1\n"
         "      models: ['*']\n"
         f"      log: {str(log).lower()}\n"
+        f"      cache_prompt: {str(cache_prompt).lower()}\n"
     )
 
     def upstream_handler(request: httpx.Request) -> httpx.Response:
+        if captured_requests is not None:
+            captured_requests.append(request)
         body = json.dumps({"choices": [{"message": {"role": "assistant", "content": "hi"}}]})
         return httpx.Response(
             200,
@@ -105,3 +114,32 @@ def test_models_endpoint_not_traced_or_ledgered(tmp_path: Path, monkeypatch):
     )
     assert response.status_code == 200
     assert len(list((trace_dir / "completion").glob("*_request.json"))) == 1
+
+
+def test_cache_prompt_added_when_enabled(tmp_path: Path, monkeypatch):
+    captured: list = []
+    client = _make_client(tmp_path, monkeypatch, log=False, cache_prompt=True, captured_requests=captured)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-5.1", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 200
+
+    forwarded = json.loads(captured[0].content)
+    assert forwarded["cache_prompt"] is True
+    assert forwarded["model"] == "gpt-5.1"
+
+
+def test_cache_prompt_absent_when_disabled(tmp_path: Path, monkeypatch):
+    captured: list = []
+    client = _make_client(tmp_path, monkeypatch, log=False, cache_prompt=False, captured_requests=captured)
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-5.1", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert response.status_code == 200
+
+    forwarded = json.loads(captured[0].content)
+    assert "cache_prompt" not in forwarded

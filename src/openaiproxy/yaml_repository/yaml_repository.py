@@ -87,6 +87,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 max_models = entry.get("max_models")
                 protocol = entry.get("protocol")
                 mode = str(entry.get("mode") or "remote")
+                cache_prompt = entry.get("cache_prompt")
 
                 # local endpoints serve models in-process and need no base_url
                 if not models or (not base_url and mode != "local"):
@@ -118,6 +119,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                         max_models=int(max_models) if max_models is not None else 0,
                         protocol=str(protocol) if protocol else "openai",
                         mode=mode,
+                        cache_prompt=bool(cache_prompt),
                     )
                 )
 
@@ -152,6 +154,8 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 entry["protocol"] = endpoint.protocol
             if endpoint.mode and endpoint.mode != "remote":
                 entry["mode"] = endpoint.mode
+            if endpoint.cache_prompt:
+                entry["cache_prompt"] = True
             endpoints[endpoint.name] = entry
 
         llmproxy: dict = {}

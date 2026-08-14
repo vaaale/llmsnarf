@@ -210,9 +210,11 @@ class ProxyService:
     async def proxy(self, method: str, endpoint_path: str, body: bytes, headers: dict[str, str], query_params: dict[str, str]):
         payload: Any = {}
         body_to_forward = body
+        payload_is_json_object = False
         if body:
             try:
                 payload = json.loads(body)
+                payload_is_json_object = isinstance(payload, dict)
             except Exception:
                 payload = {
                     "raw_body_base64": base64.b64encode(body).decode("ascii"),
@@ -265,6 +267,10 @@ class ProxyService:
             )
 
         payload = await self.substitute_role(payload, selected_endpoint)
+
+        if selected_endpoint.cache_prompt and payload_is_json_object:
+            payload["cache_prompt"] = True
+            body_to_forward = json.dumps(payload).encode("utf-8")
 
         if forwarded_model is not None:
             await self._model_tracker.ensure_capacity(selected_endpoint, str(forwarded_model))

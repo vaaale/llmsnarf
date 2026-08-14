@@ -50,6 +50,10 @@ class EndpointSchema(BaseModel):
         default="remote",
         description="remote = forward requests to base_url; local = serve embedding models in-process.",
     )
+    cache_prompt: bool = Field(
+        default=False,
+        description='Add "cache_prompt": true to forwarded request bodies (llama.cpp prompt caching).',
+    )
 
 
 class ConfigResponse(BaseModel):

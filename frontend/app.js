@@ -360,11 +360,22 @@ async function selectTrace(id) {
 }
 
 function messageContentToText(content) {
+  if (content === null || content === undefined) return "";
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
-    return content.map((part) => (part && part.type === "text" ? part.text : `[${part?.type || "content"}]`)).join("\n");
+    return content.map((part) => {
+      if (!part || typeof part !== "object") return String(part ?? "");
+      if (part.type === "text" || part.type === "input_text" || part.type === "output_text") return part.text;
+      if (part.type === "tool_use" || part.type === "tool_result") return ""; // rendered as separate items
+      return `[${part.type || "content"}]`;
+    }).filter(Boolean).join("\n");
   }
   return JSON.stringify(content, null, 2);
+}
+
+function toolCallText(id, name, args) {
+  const argStr = typeof args === "string" ? args : JSON.stringify(args ?? {}, null, 2);
+  return `call_id: ${id || ""}\nname: ${name || ""}\narguments: ${argStr}`;
 }
 
 function renderConversation(d) {
@@ -374,12 +385,12 @@ function renderConversation(d) {
     const body = renderCallMessages(call, ci);
     return `<div class="call">
       <div class="call-head" onclick="toggleCall(${ci})">
-        <span class="call-toggle" id="call-toggle-${ci}">▶</span>
+        <span class="call-toggle" id="call-toggle-${ci}">▼</span>
         <span class="call-label">${label}</span>
         ${statusTag(call.summary)}
         <span class="mono muted" style="font-size:11px">${fmtDuration(call.summary.duration_ms)}</span>
       </div>
-      <div class="call-body" id="call-body-${ci}" style="display:none">${body}</div>
+      <div class="call-body" id="call-body-${ci}">${body}</div>
     </div>`;
   }).join("");
   document.getElementById("pane-conv").innerHTML = html || '<div class="empty">No messages in payload.</div>';
@@ -413,14 +424,35 @@ function renderCallMessages(d, prefix) {
 
 function extractRequestMessages(payload) {
   if (!payload) return [];
-  if (Array.isArray(payload.messages)) return payload.messages.map(normalizeMessage);
+  if (Array.isArray(payload.messages)) return payload.messages.flatMap(normalizeMessage);
   if (Array.isArray(payload.input)) return payload.input.map(normalizeInputItem);
   if (typeof payload.input === "string") return [{ role: "user", content: payload.input }];
   return [];
 }
 
 function normalizeMessage(m) {
-  return { role: m.role, content: messageContentToText(m.content) };
+  const items = [];
+  const text = messageContentToText(m.content);
+  if (text) items.push({ role: m.role, content: text });
+  // OpenAI chat: assistant messages may carry tool_calls (and legacy function_call) next to text.
+  for (const tc of m.tool_calls || []) {
+    items.push({ role: "tool_call", content: toolCallText(tc.id, tc.function?.name, tc.function?.arguments) });
+  }
+  if (m.function_call) {
+    items.push({ role: "tool_call", content: toolCallText("", m.function_call.name, m.function_call.arguments) });
+  }
+  // Anthropic: tool_use / tool_result live inside the content block array.
+  if (Array.isArray(m.content)) {
+    for (const part of m.content) {
+      if (part?.type === "tool_use") {
+        items.push({ role: "tool_call", content: toolCallText(part.id, part.name, part.input) });
+      } else if (part?.type === "tool_result") {
+        items.push({ role: "tool_result", content: `call_id: ${part.tool_use_id || ""}\noutput: ${messageContentToText(part.content)}` });
+      }
+    }
+  }
+  if (!items.length) items.push({ role: m.role, content: text });
+  return items;
 }
 
 function normalizeInputItem(item) {
@@ -447,35 +479,94 @@ function extractResponseParts(d) {
     if (typeof body === "string") {
       assistant = body;
     } else if (Array.isArray(body.choices)) {
-      const choice = body.choices[0];
-      assistant = choice?.message?.content || choice?.text || "";
+      const msg = body.choices[0]?.message || {};
+      const text = msg.content || body.choices[0]?.text || "";
+      if (text) parts.push({ role: msg.role || "assistant", content: text, note: "response" });
+      for (const tc of msg.tool_calls || []) {
+        parts.push({ type: "tool_call", content: toolCallText(tc.id, tc.function?.name, tc.function?.arguments) });
+      }
+      if (msg.function_call) {
+        parts.push({ type: "tool_call", content: toolCallText("", msg.function_call.name, msg.function_call.arguments) });
+      }
+      assistant = null;
     } else if (Array.isArray(body.output)) {
-      for (const item of body.output) {
-        if (item.type === "message" && Array.isArray(item.content)) {
-          const text = item.content
-            .filter((c) => c.type === "output_text" || c.type === "text")
-            .map((c) => c.text)
-            .join("\n");
-          if (text) parts.push({ role: item.role || "assistant", content: text, note: "response" });
-        } else if (item.type === "reasoning") {
-          const text = Array.isArray(item.summary)
-            ? item.summary.map((s) => s.text || "").join("\n")
-            : (item.summary || "");
-          if (text) parts.push({ type: "reasoning", content: text, note: "thinking" });
-        } else if (item.type === "function_call") {
-          parts.push({ type: "function_call", content: `call_id: ${item.call_id || ""}\nname: ${item.name || ""}\narguments: ${item.arguments || ""}` });
-        } else if (item.type === "function_call_output") {
-          parts.push({ type: "function_call_output", content: `call_id: ${item.call_id || ""}\noutput: ${item.output || ""}` });
-        } else if (item.type === "web_search_call") {
-          const query = item.action?.query || "";
-          parts.push({ type: "web_search", content: `query: ${query}`, note: "search" });
+      pushOutputItems(body.output, parts);
+      assistant = null;
+    } else if (Array.isArray(body.content)) {
+      // Anthropic /v1/messages response: content is a block array on the message itself.
+      for (const block of body.content) {
+        if (block.type === "text" && block.text) {
+          parts.push({ role: body.role || "assistant", content: block.text, note: "response" });
+        } else if (block.type === "thinking" && block.thinking) {
+          parts.push({ type: "reasoning", content: block.thinking, note: "thinking" });
+        } else if (block.type === "tool_use") {
+          parts.push({ type: "tool_call", content: toolCallText(block.id, block.name, block.input) });
         }
       }
       assistant = null;
     }
   }
   if (assistant) parts.push({ role: "assistant", content: assistant, note: "response" });
+  if (!d.response_body && Array.isArray(d.response_chunks) && d.response_chunks.length) {
+    extractStreamedParts(d.response_chunks, parts);
+  }
   return parts;
+}
+
+function pushOutputItems(output, parts) {
+  for (const item of output) {
+    if (item.type === "message" && Array.isArray(item.content)) {
+      const text = item.content
+        .filter((c) => c.type === "output_text" || c.type === "text")
+        .map((c) => c.text)
+        .join("\n");
+      if (text) parts.push({ role: item.role || "assistant", content: text, note: "response" });
+    } else if (item.type === "reasoning") {
+      const text = Array.isArray(item.summary)
+        ? item.summary.map((s) => s.text || "").join("\n")
+        : (item.summary || "");
+      if (text) parts.push({ type: "reasoning", content: text, note: "thinking" });
+    } else if (item.type === "function_call") {
+      parts.push({ type: "function_call", content: `call_id: ${item.call_id || ""}\nname: ${item.name || ""}\narguments: ${item.arguments || ""}` });
+    } else if (item.type === "function_call_output") {
+      parts.push({ type: "function_call_output", content: `call_id: ${item.call_id || ""}\noutput: ${item.output || ""}` });
+    } else if (item.type === "web_search_call") {
+      const query = item.action?.query || "";
+      parts.push({ type: "web_search", content: `query: ${query}`, note: "search" });
+    }
+  }
+}
+
+// The server-assembled stream content only keeps text deltas, so tool calls in
+// streamed responses must be re-assembled here from the raw SSE chunks.
+function extractStreamedParts(chunks, parts) {
+  const toolCalls = new Map();
+  for (const chunk of chunks) {
+    for (let line of String(chunk).split("\n")) {
+      line = line.trim();
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      let event;
+      try { event = JSON.parse(data); } catch { continue; }
+      if (event.type === "response.completed" && Array.isArray(event.response?.output)) {
+        pushOutputItems(event.response.output, parts);
+        continue;
+      }
+      const delta = event.choices?.[0]?.delta;
+      for (const tc of delta?.tool_calls || []) {
+        const idx = tc.index ?? 0;
+        if (!toolCalls.has(idx)) toolCalls.set(idx, { id: "", name: "", args: "" });
+        const c = toolCalls.get(idx);
+        if (tc.id) c.id = tc.id;
+        if (tc.function?.name) c.name = tc.function.name;
+        if (tc.function?.arguments) c.args += tc.function.arguments;
+      }
+    }
+  }
+  for (const c of toolCalls.values()) {
+    parts.push({ type: "tool_call", content: toolCallText(c.id, c.name, c.args) });
+  }
 }
 
 function toggleMessage(key) {
@@ -707,6 +798,7 @@ function renderConfigCards() {
         <div class="kv"><span class="k">Aliases</span><span class="v">${mapHtml(ep.aliases)}</span></div>
         <div class="kv"><span class="k">Role subst.</span><span class="v">${mapHtml(ep.substitute_role)}</span></div>
         <div class="kv"><span class="k">Max models</span><span class="v">${ep.max_models > 0 ? esc(ep.max_models) : '<span class="muted">unlimited</span>'}</span></div>
+        <div class="kv"><span class="k">Cache prompt</span><span class="v"><span class="tag ${ep.cache_prompt ? "ok" : "warn"}">${ep.cache_prompt ? "enabled" : "off"}</span></span></div>
         <div class="kv"><span class="k">Trace log</span><span class="v"><span class="tag ${ep.log ? "ok" : "warn"}">${ep.log ? "enabled" : "off"}</span></span></div>
       </div>
     </div>`).join("") || '<div class="empty">No endpoints configured.</div>';
@@ -726,6 +818,7 @@ async function persistConfig() {
       max_models: ep.max_models || 0,
       protocol: ep.protocol || "openai",
       mode: ep.mode || "remote",
+      cache_prompt: !!ep.cache_prompt,
     })),
   };
   CONFIG = await apiPut("config", payload);
@@ -804,7 +897,7 @@ document.getElementById("fe-models-input").addEventListener("keydown", (e) => {
 function openEditor(i) {
   editingIndex = i;
   const ep = i === null
-    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true, max_models: 0, protocol: "openai", mode: "remote" }
+    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true, max_models: 0, protocol: "openai", mode: "remote", cache_prompt: false }
     : CONFIG.endpoints[i];
   document.getElementById("modal-title").textContent = i === null ? "Add endpoint" : "Edit endpoint — " + ep.name;
   document.getElementById("fe-name").value = ep.name;
@@ -816,6 +909,7 @@ function openEditor(i) {
     : `Current: ${ep.api_key_masked || "not set"}. Leave empty to keep it.`;
   document.getElementById("fe-enabled").classList.toggle("off", !ep.enabled);
   document.getElementById("fe-log").classList.toggle("off", !ep.log);
+  document.getElementById("fe-cache-prompt").classList.toggle("off", !ep.cache_prompt);
   document.getElementById("fe-max-models").value = ep.max_models || 0;
   document.getElementById("fe-protocol").value = ep.protocol === "anthropic" ? "anthropic" : "openai";
   document.getElementById("fe-mode").value = ep.mode === "local" ? "local" : "remote";
@@ -840,6 +934,7 @@ document.getElementById("ep-modal").addEventListener("click", (e) => {
 });
 document.getElementById("fe-enabled").onclick = function () { this.classList.toggle("off"); };
 document.getElementById("fe-log").onclick = function () { this.classList.toggle("off"); };
+document.getElementById("fe-cache-prompt").onclick = function () { this.classList.toggle("off"); };
 
 function collectMap(containerId) {
   const out = {};
@@ -884,6 +979,7 @@ document.getElementById("modal-apply").onclick = async () => {
     max_models: parseInt(document.getElementById("fe-max-models").value, 10) || 0,
     protocol: document.getElementById("fe-protocol").value === "anthropic" ? "anthropic" : "openai",
     mode,
+    cache_prompt: !document.getElementById("fe-cache-prompt").classList.contains("off"),
   };
   if (editingIndex === null) CONFIG.endpoints.push(ep);
   else CONFIG.endpoints[editingIndex] = ep;

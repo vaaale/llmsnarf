@@ -16,6 +16,7 @@ class EndpointConfig:
     max_models: int = 0  # max loaded models on the endpoint; < 1 disables tracking
     protocol: str = "openai"  # wire format of the upstream: openai | anthropic
     mode: str = "remote"  # remote = forward requests; local = serve embeddings in-process (no base_url needed)
+    cache_prompt: bool = False  # add "cache_prompt": true to forwarded request bodies (llama.cpp prompt caching)
 
 
 @dataclass(frozen=True)

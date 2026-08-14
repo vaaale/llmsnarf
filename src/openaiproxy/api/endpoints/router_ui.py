@@ -57,6 +57,7 @@ def _endpoint_to_schema(endpoint: EndpointConfig) -> EndpointSchema:
         max_models=endpoint.max_models,
         protocol=endpoint.protocol if endpoint.protocol in ("openai", "anthropic") else "openai",
         mode=endpoint.mode if endpoint.mode in ("remote", "local") else "remote",
+        cache_prompt=endpoint.cache_prompt,
     )
 
 
@@ -73,6 +74,7 @@ def _schema_to_endpoint(schema: EndpointSchema) -> EndpointConfig:
         max_models=schema.max_models,
         protocol=schema.protocol,
         mode=schema.mode,
+        cache_prompt=schema.cache_prompt,
     )
 
 

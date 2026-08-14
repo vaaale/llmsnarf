@@ -122,6 +122,10 @@
   .msg.user .msg-head { background: rgba(79,156,249,.12); color: var(--accent); }
   .msg.assistant .msg-head { background: rgba(63,185,80,.12); color: var(--green); }
   .msg.tool .msg-head { background: rgba(188,140,255,.12); color: var(--purple); }
+  .msg.tool_call .msg-head, .msg.function_call .msg-head { background: rgba(188,140,255,.12); color: var(--purple); }
+  .msg.tool_result .msg-head, .msg.function_call_output .msg-head { background: rgba(188,140,255,.08); color: var(--purple); }
+  .msg.reasoning .msg-head { background: rgba(139,148,158,.12); color: var(--muted); }
+  .msg.web_search .msg-head { background: rgba(57,197,207,.12); color: var(--cyan); }
   .msg.error .msg-head { background: rgba(248,81,73,.12); color: var(--red); }
   .subst-note { font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted); margin-left: auto; }
   .assembled-note { background: rgba(57,197,207,.08); border: 1px dashed rgba(57,197,207,.35); color: var(--cyan); border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 12px; }
@@ -621,6 +625,13 @@
         <div class="switch-field">
           <div class="toggle" id="fe-log"></div>
           <span class="muted" style="font-size:13px">Write request/response JSON pairs to trace_dir</span>
+        </div>
+      </div>
+      <div class="field">
+        <label>Cache prompt</label>
+        <div class="switch-field">
+          <div class="toggle off" id="fe-cache-prompt"></div>
+          <span class="muted" style="font-size:13px">Add <code>"cache_prompt": true</code> to forwarded request bodies (llama.cpp prompt caching)</span>
         </div>
       </div>
     </div>
