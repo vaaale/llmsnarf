@@ -88,6 +88,13 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 protocol = entry.get("protocol")
                 mode = str(entry.get("mode") or "remote")
                 cache_prompt = entry.get("cache_prompt")
+                slot_cache = entry.get("slot_cache")
+                slot_count = entry.get("slot_count")
+                backend = entry.get("backend")
+                if not backend:
+                    # migration: configs written before the backend field used these
+                    # flags only for llama.cpp upstreams
+                    backend = "llamacpp" if (cache_prompt or slot_cache) else "generic"
 
                 # local endpoints serve models in-process and need no base_url
                 if not models or (not base_url and mode != "local"):
@@ -119,7 +126,10 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                         max_models=int(max_models) if max_models is not None else 0,
                         protocol=str(protocol) if protocol else "openai",
                         mode=mode,
+                        backend=str(backend),
                         cache_prompt=bool(cache_prompt),
+                        slot_cache=bool(slot_cache),
+                        slot_count=int(slot_count) if slot_count is not None else 0,
                     )
                 )
 
@@ -154,8 +164,14 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
                 entry["protocol"] = endpoint.protocol
             if endpoint.mode and endpoint.mode != "remote":
                 entry["mode"] = endpoint.mode
+            if endpoint.backend and endpoint.backend != "generic":
+                entry["backend"] = endpoint.backend
             if endpoint.cache_prompt:
                 entry["cache_prompt"] = True
+            if endpoint.slot_cache:
+                entry["slot_cache"] = True
+            if endpoint.slot_count > 0:
+                entry["slot_count"] = endpoint.slot_count
             endpoints[endpoint.name] = entry
 
         llmproxy: dict = {}

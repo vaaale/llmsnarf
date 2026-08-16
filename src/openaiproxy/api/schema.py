@@ -50,9 +50,22 @@ class EndpointSchema(BaseModel):
         default="remote",
         description="remote = forward requests to base_url; local = serve embedding models in-process.",
     )
+    backend: Literal["generic", "llamacpp"] = Field(
+        default="generic",
+        description="Server implementation of the upstream. Orthogonal to protocol; gates backend-specific features.",
+    )
     cache_prompt: bool = Field(
         default=False,
-        description='Add "cache_prompt": true to forwarded request bodies (llama.cpp prompt caching).',
+        description='Add "cache_prompt": true to forwarded request bodies (llama.cpp backend only).',
+    )
+    slot_cache: bool = Field(
+        default=False,
+        description="Save/restore llama-server KV cache slots per conversation, keyed by X-Correlation-Id (llama.cpp backend only).",
+    )
+    slot_count: int = Field(
+        default=0,
+        ge=0,
+        description="llama.cpp server slots (-np). 0 = auto-detect via GET /props.",
     )
 
 
@@ -68,6 +81,26 @@ class ConfigResponse(BaseModel):
 
 class ConfigUpdateRequest(BaseModel):
     endpoints: list[EndpointSchema]
+
+
+class BackendDetectRequest(BaseModel):
+    base_url: str
+    api_key: str | None = Field(
+        default=None,
+        description="Key to authenticate the probe. Empty falls back to the stored key of `name`, if given.",
+    )
+    name: str | None = Field(default=None, description="Existing endpoint name to borrow the stored API key from.")
+    model: str | None = Field(
+        default=None,
+        description="Model to scope the probe to. Required to read the slot count from a llama.cpp router.",
+    )
+
+
+class BackendDetectResponse(BaseModel):
+    reachable: bool
+    backend: Literal["generic", "llamacpp"]
+    total_slots: int | None = None
+    router: bool = False
 
 
 class RouteResolveResponse(BaseModel):

@@ -595,6 +595,17 @@
         <div class="hint">Wire format of the upstream API. Requests are translated automatically in both directions.</div>
       </div>
       <div class="field">
+        <label>Backend type</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="fe-backend" style="flex:1">
+            <option value="generic">Generic</option>
+            <option value="llamacpp">llama.cpp (llama-server)</option>
+          </select>
+          <button class="btn" id="fe-backend-detect" style="white-space:nowrap">⌕ Auto-detect</button>
+        </div>
+        <div class="hint">Server implementation behind the base URL — independent of the protocol. Unlocks backend-specific features. Auto-detect probes <code>GET /props</code>.</div>
+      </div>
+      <div class="field">
         <label>API key</label>
         <input type="password" id="fe-key" placeholder="">
         <div class="hint" id="fe-key-hint">Leave empty to keep the current key.</div>
@@ -627,11 +638,25 @@
           <span class="muted" style="font-size:13px">Write request/response JSON pairs to trace_dir</span>
         </div>
       </div>
-      <div class="field">
-        <label>Cache prompt</label>
-        <div class="switch-field">
-          <div class="toggle off" id="fe-cache-prompt"></div>
-          <span class="muted" style="font-size:13px">Add <code>"cache_prompt": true</code> to forwarded request bodies (llama.cpp prompt caching)</span>
+      <div id="llamacpp-fields">
+        <div class="field">
+          <label>Cache prompt</label>
+          <div class="switch-field">
+            <div class="toggle off" id="fe-cache-prompt"></div>
+            <span class="muted" style="font-size:13px">Add <code>"cache_prompt": true</code> to forwarded request bodies (llama.cpp prompt caching)</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>KV slot persistence</label>
+          <div class="switch-field">
+            <div class="toggle off" id="fe-slot-cache"></div>
+            <span class="muted" style="font-size:13px">Save/restore llama-server KV cache slots per conversation (<code>X-Correlation-Id</code>, fallback: <code>default</code>). Requires <code>--slot-save-path</code> on the server.</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>Server slots</label>
+          <input type="number" id="fe-slot-count" step="1" min="0" placeholder="0">
+          <div class="hint">Number of llama-server slots (<code>-np</code>). 0 = auto-detect via <code>GET /props</code>, re-checked every 5 minutes. Sessions are mapped to slots with sticky LRU assignment.</div>
         </div>
       </div>
     </div>

@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from openaiproxy.api.schema import (
+    BackendDetectRequest,
+    BackendDetectResponse,
     ConfigResponse,
     ConfigUpdateRequest,
     EndpointSchema,
@@ -20,6 +22,7 @@ from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebFetchCo
 from openaiproxy.models.trace_models import TraceSummary
 from openaiproxy.services.config_service import ConfigService, ConfigValidationError
 from openaiproxy.services.ledger_service import LedgerService
+from openaiproxy.services.slot_cache_service import probe_backend
 from openaiproxy.services.trace_service import TraceService, assemble_stream_content
 
 router = APIRouter(prefix="/ui/api")
@@ -57,7 +60,10 @@ def _endpoint_to_schema(endpoint: EndpointConfig) -> EndpointSchema:
         max_models=endpoint.max_models,
         protocol=endpoint.protocol if endpoint.protocol in ("openai", "anthropic") else "openai",
         mode=endpoint.mode if endpoint.mode in ("remote", "local") else "remote",
+        backend=endpoint.backend if endpoint.backend in ("generic", "llamacpp") else "generic",
         cache_prompt=endpoint.cache_prompt,
+        slot_cache=endpoint.slot_cache,
+        slot_count=endpoint.slot_count,
     )
 
 
@@ -74,7 +80,10 @@ def _schema_to_endpoint(schema: EndpointSchema) -> EndpointConfig:
         max_models=schema.max_models,
         protocol=schema.protocol,
         mode=schema.mode,
+        backend=schema.backend,
         cache_prompt=schema.cache_prompt,
+        slot_cache=schema.slot_cache,
+        slot_count=schema.slot_count,
     )
 
 
@@ -185,6 +194,31 @@ def update_web_fetch_config(
     if not web_fetch.base_url:
         raise HTTPException(status_code=422, detail="Web fetch base_url is required")
     return _config_to_response(config_service.update_web_fetch(web_fetch))
+
+
+@router.post("/config/detect_backend", response_model=BackendDetectResponse)
+async def detect_backend(
+    payload: BackendDetectRequest,
+    config_service: ConfigService = Depends(get_config_service),
+) -> BackendDetectResponse:
+    base_url = payload.base_url.strip().rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=422, detail="base_url is required")
+    api_key = payload.api_key or ""
+    if not api_key and payload.name:
+        # editing an existing endpoint: the UI only holds a masked key, so
+        # borrow the stored one for the probe
+        for endpoint in config_service.get_config().endpoints:
+            if endpoint.name == payload.name:
+                api_key = endpoint.api_key
+                break
+    model = (payload.model or "").strip() or None
+    # autoload stays off: detecting a backend must not boot a model on the GPU
+    result = await probe_backend(base_url, api_key, model, autoload=False)
+    if result["backend"] == "generic" and model:
+        # not llama.cpp for that model — retry unscoped in case the name was wrong
+        result = await probe_backend(base_url, api_key, None, autoload=False)
+    return BackendDetectResponse(**result)
 
 
 @router.get("/config/resolve", response_model=RouteResolveResponse)

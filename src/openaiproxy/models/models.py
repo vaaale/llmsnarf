@@ -16,7 +16,10 @@ class EndpointConfig:
     max_models: int = 0  # max loaded models on the endpoint; < 1 disables tracking
     protocol: str = "openai"  # wire format of the upstream: openai | anthropic
     mode: str = "remote"  # remote = forward requests; local = serve embeddings in-process (no base_url needed)
-    cache_prompt: bool = False  # add "cache_prompt": true to forwarded request bodies (llama.cpp prompt caching)
+    backend: str = "generic"  # server implementation: generic | llamacpp — orthogonal to protocol, gates backend-specific features
+    cache_prompt: bool = False  # add "cache_prompt": true to forwarded request bodies (llama.cpp only)
+    slot_cache: bool = False  # save/restore llama-server KV cache slots per conversation (llama.cpp only, X-Correlation-Id)
+    slot_count: int = 0  # llama.cpp server slots (-np); 0 = auto-detect via GET /props
 
 
 @dataclass(frozen=True)

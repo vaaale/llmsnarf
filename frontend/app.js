@@ -9,9 +9,9 @@ async function apiGet(path) {
   return res.json();
 }
 
-async function apiPut(path, body) {
+async function apiSend(method, path, body) {
   const res = await fetch(`${API}/${path}`, {
-    method: "PUT",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -22,6 +22,9 @@ async function apiPut(path, body) {
   }
   return res.json();
 }
+
+const apiPut = (path, body) => apiSend("PUT", path, body);
+const apiPost = (path, body) => apiSend("POST", path, body);
 
 function esc(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -793,12 +796,16 @@ function renderConfigCards() {
         <div class="kv"><span class="k">Mode</span><span class="v"><span class="tag ${ep.mode === "local" ? "route" : "ok"}">${ep.mode === "local" ? "local (in-process)" : "remote"}</span></span></div>
         <div class="kv"><span class="k">Base URL</span><span class="v">${ep.mode === "local" ? '<span class="muted">—</span>' : esc(ep.base_url)}</span></div>
         <div class="kv"><span class="k">Protocol</span><span class="v"><span class="tag ${ep.protocol === "anthropic" ? "route" : "model"}">${esc(ep.protocol || "openai")}</span></span></div>
+        <div class="kv"><span class="k">Backend</span><span class="v"><span class="tag ${ep.backend === "llamacpp" ? "route" : "sync"}">${ep.backend === "llamacpp" ? "llama.cpp" : "generic"}</span></span></div>
         <div class="kv"><span class="k">API key</span><span class="v">${esc(ep.api_key_masked) || "—"}</span></div>
         <div class="kv"><span class="k">Models</span><span class="v">${ep.models.map((m) => '<span class="tag model">' + esc(m) + "</span>").join(" ")}</span></div>
         <div class="kv"><span class="k">Aliases</span><span class="v">${mapHtml(ep.aliases)}</span></div>
         <div class="kv"><span class="k">Role subst.</span><span class="v">${mapHtml(ep.substitute_role)}</span></div>
         <div class="kv"><span class="k">Max models</span><span class="v">${ep.max_models > 0 ? esc(ep.max_models) : '<span class="muted">unlimited</span>'}</span></div>
+        ${ep.backend === "llamacpp" ? `
         <div class="kv"><span class="k">Cache prompt</span><span class="v"><span class="tag ${ep.cache_prompt ? "ok" : "warn"}">${ep.cache_prompt ? "enabled" : "off"}</span></span></div>
+        <div class="kv"><span class="k">KV slot cache</span><span class="v"><span class="tag ${ep.slot_cache ? "ok" : "warn"}">${ep.slot_cache ? "enabled" : "off"}</span></span></div>
+        <div class="kv"><span class="k">Server slots</span><span class="v">${ep.slot_count > 0 ? esc(ep.slot_count) : '<span class="muted">auto</span>'}</span></div>` : ""}
         <div class="kv"><span class="k">Trace log</span><span class="v"><span class="tag ${ep.log ? "ok" : "warn"}">${ep.log ? "enabled" : "off"}</span></span></div>
       </div>
     </div>`).join("") || '<div class="empty">No endpoints configured.</div>';
@@ -818,7 +825,10 @@ async function persistConfig() {
       max_models: ep.max_models || 0,
       protocol: ep.protocol || "openai",
       mode: ep.mode || "remote",
+      backend: ep.backend || "generic",
       cache_prompt: !!ep.cache_prompt,
+      slot_cache: !!ep.slot_cache,
+      slot_count: ep.slot_count || 0,
     })),
   };
   CONFIG = await apiPut("config", payload);
@@ -897,7 +907,7 @@ document.getElementById("fe-models-input").addEventListener("keydown", (e) => {
 function openEditor(i) {
   editingIndex = i;
   const ep = i === null
-    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true, max_models: 0, protocol: "openai", mode: "remote", cache_prompt: false }
+    ? { name: "", base_url: "", api_key_masked: "", models: [], aliases: {}, substitute_role: {}, log: true, enabled: true, max_models: 0, protocol: "openai", mode: "remote", backend: "generic", cache_prompt: false, slot_cache: false, slot_count: 0 }
     : CONFIG.endpoints[i];
   document.getElementById("modal-title").textContent = i === null ? "Add endpoint" : "Edit endpoint — " + ep.name;
   document.getElementById("fe-name").value = ep.name;
@@ -910,10 +920,14 @@ function openEditor(i) {
   document.getElementById("fe-enabled").classList.toggle("off", !ep.enabled);
   document.getElementById("fe-log").classList.toggle("off", !ep.log);
   document.getElementById("fe-cache-prompt").classList.toggle("off", !ep.cache_prompt);
+  document.getElementById("fe-slot-cache").classList.toggle("off", !ep.slot_cache);
+  document.getElementById("fe-slot-count").value = ep.slot_count || 0;
   document.getElementById("fe-max-models").value = ep.max_models || 0;
   document.getElementById("fe-protocol").value = ep.protocol === "anthropic" ? "anthropic" : "openai";
   document.getElementById("fe-mode").value = ep.mode === "local" ? "local" : "remote";
+  document.getElementById("fe-backend").value = ep.backend === "llamacpp" ? "llamacpp" : "generic";
   syncModeFields();
+  syncBackendFields();
   modelChips = [...ep.models];
   renderChips();
   document.getElementById("fe-aliases").innerHTML = "";
@@ -935,6 +949,7 @@ document.getElementById("ep-modal").addEventListener("click", (e) => {
 document.getElementById("fe-enabled").onclick = function () { this.classList.toggle("off"); };
 document.getElementById("fe-log").onclick = function () { this.classList.toggle("off"); };
 document.getElementById("fe-cache-prompt").onclick = function () { this.classList.toggle("off"); };
+document.getElementById("fe-slot-cache").onclick = function () { this.classList.toggle("off"); };
 
 function collectMap(containerId) {
   const out = {};
@@ -954,6 +969,49 @@ function syncModeFields() {
     : "https://api.example.com/v1";
 }
 document.getElementById("fe-mode").onchange = syncModeFields;
+
+function syncBackendFields() {
+  const llamacpp = document.getElementById("fe-backend").value === "llamacpp";
+  document.getElementById("llamacpp-fields").style.display = llamacpp ? "" : "none";
+}
+document.getElementById("fe-backend").onchange = syncBackendFields;
+
+document.getElementById("fe-backend-detect").onclick = async (e) => {
+  e.preventDefault();
+  const baseUrl = document.getElementById("fe-url").value.trim();
+  if (!baseUrl) { toast("Enter a base URL first", true); return; }
+  const btn = document.getElementById("fe-backend-detect");
+  btn.disabled = true;
+  try {
+    // a llama.cpp router reports slots per model, so probe with one of the
+    // endpoint's configured models (wildcards name nothing to probe)
+    const probeModel = modelChips.find((m) => m !== "*") || null;
+    const r = await apiPost("config/detect_backend", {
+      base_url: baseUrl,
+      api_key: document.getElementById("fe-key").value.trim() || null,
+      name: editingIndex !== null ? CONFIG.endpoints[editingIndex].name : null,
+      model: probeModel,
+    });
+    document.getElementById("fe-backend").value = r.backend;
+    syncBackendFields();
+    if (!r.reachable) {
+      toast("Server unreachable — assuming generic backend", true);
+    } else if (r.backend !== "llamacpp") {
+      toast("No llama.cpp signature found — generic backend");
+    } else if (r.total_slots) {
+      document.getElementById("fe-slot-count").value = r.total_slots;
+      toast(`Detected llama.cpp${r.router ? " router" : ""} — ${r.total_slots} slot${r.total_slots === 1 ? "" : "s"}`);
+    } else {
+      toast(r.router
+        ? "Detected llama.cpp router — slot count needs a loaded model, leaving it on auto"
+        : "Detected llama.cpp — slot count unavailable, leaving it on auto");
+    }
+  } catch (ex) {
+    toast("Detection failed: " + ex.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 document.getElementById("modal-apply").onclick = async () => {
   const name = document.getElementById("fe-name").value.trim();
@@ -979,7 +1037,10 @@ document.getElementById("modal-apply").onclick = async () => {
     max_models: parseInt(document.getElementById("fe-max-models").value, 10) || 0,
     protocol: document.getElementById("fe-protocol").value === "anthropic" ? "anthropic" : "openai",
     mode,
+    backend: document.getElementById("fe-backend").value === "llamacpp" ? "llamacpp" : "generic",
     cache_prompt: !document.getElementById("fe-cache-prompt").classList.contains("off"),
+    slot_cache: !document.getElementById("fe-slot-cache").classList.contains("off"),
+    slot_count: Math.max(0, parseInt(document.getElementById("fe-slot-count").value, 10) || 0),
   };
   if (editingIndex === null) CONFIG.endpoints.push(ep);
   else CONFIG.endpoints[editingIndex] = ep;

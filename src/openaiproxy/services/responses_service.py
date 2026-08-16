@@ -23,6 +23,7 @@ from openaiproxy.services.proxy_service import (
     save_response_trace,
 )
 from openaiproxy.services.ledger_service import LedgerService
+from openaiproxy.services.slot_cache_service import SlotAllocator, SlotCacheService
 from openaiproxy.services.web_search_service import (
     WEB_FETCH_TOOL_DEFINITION,
     WEB_FETCH_TOOL_NAME,
@@ -357,6 +358,8 @@ class ResponsesService:
         web_search_service: WebSearchService,
         model_tracker: ModelTrackerService,
         ledger_service: LedgerService | None = None,
+        slot_cache_service: SlotCacheService | None = None,
+        slot_allocator: SlotAllocator | None = None,
     ):
         self._config_repository = config_repository
         self._trace_dir = trace_dir
@@ -364,6 +367,8 @@ class ResponsesService:
         self._web_search_service = web_search_service
         self._model_tracker = model_tracker
         self._ledger_service = ledger_service
+        self._slot_cache = slot_cache_service or SlotCacheService(logger)
+        self._slot_allocator = slot_allocator or SlotAllocator(logger)
 
     async def _map_reduce_search_result(
         self,
@@ -380,6 +385,7 @@ class ResponsesService:
         api_key: str = "unknown",
         correlation_id: str | None = None,
         parent_trace_id: str | None = None,
+        cache_prompt: bool = False,
     ) -> str:
         # Each map/reduce call carries only the conversational context (the user's
         # question), not the accumulated raw results of previous searches — so the
@@ -425,6 +431,8 @@ class ResponsesService:
         async def map_one(chunk: str, chunk_index: int) -> None:
             endpoint = f"/responses/map-reduce/{chunk_index + 1}/{total_chunks}"
             payload = {"model": model, "messages": _map_messages(chunk)}
+            if cache_prompt:
+                payload["cache_prompt"] = True
             base_fn = ""
             if should_log:
                 base_fn = await save_request_trace(
@@ -473,6 +481,8 @@ class ResponsesService:
                 combined = combined[: combined_limit * 3]
 
         reduce_payload = {"model": model, "messages": _map_messages(combined)}
+        if cache_prompt:
+            reduce_payload["cache_prompt"] = True
         reduce_fn = ""
         if should_log:
             reduce_fn = await save_request_trace(
@@ -564,7 +574,7 @@ class ResponsesService:
         web_search_config = self._web_search_service.get_config()
         chat_tools, web_search_active = translate_tools(payload, web_search_config.enabled)
         chat_payload = build_chat_payload(payload, forwarded_model, chat_tools)
-        if endpoint.cache_prompt:
+        if endpoint.cache_prompt and endpoint.backend == "llamacpp":
             chat_payload["cache_prompt"] = True
 
         substitutions = endpoint.substitute_role or {}
@@ -607,12 +617,14 @@ class ResponsesService:
                 "iterator": self._stream(
                     payload, chat_payload, chat_url, forward_headers, web_search_active,
                     should_log, base_filename, correlation_id, web_search_config, api_key,
+                    endpoint,
                 ),
             }
 
         return await self._complete(
             payload, chat_payload, chat_url, forward_headers, web_search_active,
             should_log, base_filename, correlation_id, web_search_config, api_key,
+            endpoint,
         )
 
     async def _trace_response(
@@ -635,6 +647,36 @@ class ResponsesService:
         correlation_id: str | None = None,
         web_search_config: Any = None,
         api_key: str = "unknown",
+        endpoint: EndpointConfig | None = None,
+    ) -> dict:
+        # KV slot persistence: lease this conversation's slot for the whole
+        # restore -> tool loop -> save sequence
+        slot_model = str(chat_payload.get("model") or "") or None
+        async with self._slot_allocator.lease(endpoint, correlation_id, model=slot_model) as lease:
+            if lease is not None:
+                chat_payload["id_slot"] = lease.slot
+                if not lease.resident:
+                    await self._slot_cache.restore(endpoint, correlation_id, lease.slot, slot_model)
+            return await self._complete_inner(
+                payload, chat_payload, chat_url, forward_headers, web_search_active,
+                should_log, base_filename, correlation_id, web_search_config, api_key,
+                endpoint, lease,
+            )
+
+    async def _complete_inner(
+        self,
+        payload: dict,
+        chat_payload: dict,
+        chat_url: str,
+        forward_headers: dict[str, str],
+        web_search_active: bool,
+        should_log: bool,
+        base_filename: str,
+        correlation_id: str | None = None,
+        web_search_config: Any = None,
+        api_key: str = "unknown",
+        endpoint: EndpointConfig | None = None,
+        lease: Any = None,
     ) -> dict:
         response_id = _new_id("resp")
         result = _base_response(payload, response_id, str(payload.get("model") or chat_payload["model"]))
@@ -786,6 +828,7 @@ class ResponsesService:
                                     api_key=api_key,
                                     correlation_id=correlation_id,
                                     parent_trace_id=base_filename,
+                                    cache_prompt=bool(chat_payload.get("cache_prompt")),
                                 )
                         if agent_loop and web_search_config is not None:
                             remaining = _effective_call_limit(web_search_config) - _estimate_tokens(json.dumps(chat_payload))
@@ -865,6 +908,11 @@ class ResponsesService:
                 response_chunks=[],
             )
 
+        if lease is not None and endpoint is not None:
+            await self._slot_cache.save(
+                endpoint, correlation_id, lease.slot, str(chat_payload.get("model") or "") or None
+            )
+
         return {
             "type": "response",
             "content": json.dumps(result).encode("utf-8"),
@@ -884,6 +932,37 @@ class ResponsesService:
         correlation_id: str | None = None,
         web_search_config: Any = None,
         api_key: str = "unknown",
+        endpoint: EndpointConfig | None = None,
+    ) -> AsyncIterator[bytes]:
+        # KV slot persistence: lease this conversation's slot for the whole
+        # restore -> tool loop -> save sequence
+        slot_model = str(chat_payload.get("model") or "") or None
+        async with self._slot_allocator.lease(endpoint, correlation_id, model=slot_model) as lease:
+            if lease is not None:
+                chat_payload["id_slot"] = lease.slot
+                if not lease.resident:
+                    await self._slot_cache.restore(endpoint, correlation_id, lease.slot, slot_model)
+            async for chunk in self._stream_inner(
+                payload, chat_payload, chat_url, forward_headers, web_search_active,
+                should_log, base_filename, correlation_id, web_search_config, api_key,
+                endpoint, lease,
+            ):
+                yield chunk
+
+    async def _stream_inner(
+        self,
+        payload: dict,
+        chat_payload: dict,
+        chat_url: str,
+        forward_headers: dict[str, str],
+        web_search_active: bool,
+        should_log: bool,
+        base_filename: str,
+        correlation_id: str | None = None,
+        web_search_config: Any = None,
+        api_key: str = "unknown",
+        endpoint: EndpointConfig | None = None,
+        lease: Any = None,
     ) -> AsyncIterator[bytes]:
         response_id = _new_id("resp")
         snapshot = _base_response(payload, response_id, str(payload.get("model") or chat_payload["model"]))
@@ -1196,6 +1275,7 @@ class ResponsesService:
                                         api_key=api_key,
                                         correlation_id=correlation_id,
                                         parent_trace_id=base_filename,
+                                        cache_prompt=bool(chat_payload.get("cache_prompt")),
                                     )
                             if agent_loop and web_search_config is not None:
                                 remaining = _effective_call_limit(web_search_config) - _estimate_tokens(json.dumps(chat_payload))
@@ -1329,6 +1409,10 @@ class ResponsesService:
             snapshot["error"] = {"code": "server_error", "message": str(exc)}
             yield event("response.failed", {"response": snapshot})
         finally:
+            if lease is not None and endpoint is not None:
+                await self._slot_cache.save(
+                    endpoint, correlation_id, lease.slot, str(chat_payload.get("model") or "") or None
+                )
             await self._trace_response(
                 should_log,
                 base_filename,

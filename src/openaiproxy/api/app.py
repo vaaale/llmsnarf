@@ -20,6 +20,7 @@ from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.proxy_service import ProxyService
 from openaiproxy.services.responses_service import ResponsesService
+from openaiproxy.services.slot_cache_service import SlotAllocator, SlotCacheService
 from openaiproxy.services.trace_service import TraceService
 from openaiproxy.services.validation_service import ValidationService
 from openaiproxy.services.web_search_service import WebSearchService
@@ -39,6 +40,9 @@ def create_app(
     
     model_tracker = ModelTrackerService(logger=logger)
     app.state.model_tracker = model_tracker
+    # shared between the proxy and responses paths so a session holds one slot
+    slot_cache_service = SlotCacheService(logger=logger)
+    slot_allocator = SlotAllocator(logger=logger)
     ledger_service = LedgerService(
         ledger_repository=FSLedgerRepository(trace_dir=Path(trace_dir)),
         validation_service=ValidationService(),
@@ -51,6 +55,8 @@ def create_app(
         logger=logger,
         model_tracker=model_tracker,
         ledger_service=ledger_service,
+        slot_cache_service=slot_cache_service,
+        slot_allocator=slot_allocator,
     )
     web_search_service = WebSearchService(config_repository=config_repository, logger=logger)
     app.state.web_search_service = web_search_service
@@ -61,6 +67,8 @@ def create_app(
         web_search_service=web_search_service,
         model_tracker=model_tracker,
         ledger_service=ledger_service,
+        slot_cache_service=slot_cache_service,
+        slot_allocator=slot_allocator,
     )
     app.state.anthropic_service = AnthropicService(
         config_repository=config_repository,

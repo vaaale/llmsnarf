@@ -24,6 +24,7 @@ from openaiproxy.services.anthropic_translation import (
 )
 from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.ledger_service import LedgerService
+from openaiproxy.services.slot_cache_service import SlotAllocator, SlotCacheService
 
 
 CORRELATION_ID_HEADER = "x-correlation-id"
@@ -152,12 +153,16 @@ class ProxyService:
         logger: logging.Logger,
         model_tracker: ModelTrackerService,
         ledger_service: LedgerService | None = None,
+        slot_cache_service: SlotCacheService | None = None,
+        slot_allocator: SlotAllocator | None = None,
     ):
         self._config_repository = config_repository
         self._trace_dir = trace_dir
         self._logger = logger
         self._model_tracker = model_tracker
         self._ledger_service = ledger_service
+        self._slot_cache = slot_cache_service or SlotCacheService(logger)
+        self._slot_allocator = slot_allocator or SlotAllocator(logger)
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
         config = self._config_repository.load()
@@ -268,7 +273,7 @@ class ProxyService:
 
         payload = await self.substitute_role(payload, selected_endpoint)
 
-        if selected_endpoint.cache_prompt and payload_is_json_object:
+        if selected_endpoint.cache_prompt and selected_endpoint.backend == "llamacpp" and payload_is_json_object:
             payload["cache_prompt"] = True
             body_to_forward = json.dumps(payload).encode("utf-8")
 
@@ -291,6 +296,8 @@ class ProxyService:
             return await self._proxy_chat_via_anthropic(
                 payload, selected_endpoint, headers, should_log, base_filename, correlation_id
             )
+
+        use_slot_cache = payload_is_json_object and selected_endpoint.slot_cache
 
         hop_by_hop_headers = {
             "host",
@@ -325,129 +332,162 @@ class ProxyService:
             should_log,
         )
 
+        # the model as the upstream knows it — a router routes /props and /slots by it
+        slot_model = str(forwarded_model) if forwarded_model else None
+
+        def pin_to_slot(slot: int) -> bytes:
+            payload["id_slot"] = slot
+            return json.dumps(payload).encode("utf-8")
+
         if is_streaming:
             async def stream_response():
-                async with httpx.AsyncClient(timeout=300.0) as client:
-                    try:
-                        async with client.stream(
-                            method,
-                            target_url,
-                            headers=forward_headers,
-                            params=query_params,
-                            content=body_to_forward if body_to_forward else None,
-                        ) as response:
+                # KV slot persistence: lease this conversation's slot for the whole
+                # restore -> inference -> save sequence
+                async with self._slot_allocator.lease(
+                    selected_endpoint, correlation_id, enabled=use_slot_cache, model=slot_model
+                ) as lease:
+                    content = body_to_forward
+                    if lease is not None:
+                        content = pin_to_slot(lease.slot)
+                        if not lease.resident:
+                            await self._slot_cache.restore(
+                                selected_endpoint, correlation_id, lease.slot, slot_model
+                            )
+                    async with httpx.AsyncClient(timeout=300.0) as client:
+                        try:
+                            async with client.stream(
+                                method,
+                                target_url,
+                                headers=forward_headers,
+                                params=query_params,
+                                content=content if content else None,
+                            ) as response:
+                                response_data = {
+                                    "timestamp": datetime.now().isoformat(),
+                                    "status_code": response.status_code,
+                                    "headers": dict(response.headers),
+                                    "chunks": [],
+                                }
+
+                                async for chunk in response.aiter_bytes():
+                                    if should_log:
+                                        try:
+                                            response_data["chunks"].append(chunk.decode("utf-8"))
+                                        except Exception:
+                                            response_data["chunks"].append(str(chunk))
+                                    yield chunk
+
+                                if lease is not None and response.status_code < 400:
+                                    await self._slot_cache.save(
+                                        selected_endpoint, correlation_id, lease.slot, slot_model
+                                    )
+                                if should_log:
+                                    await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
+                                if self._ledger_service and base_filename:
+                                    await self._ledger_service.validate_and_record(
+                                        trace_id=base_filename,
+                                        model=requested_model,
+                                        endpoint=endpoint_path,
+                                        request_payload=payload,
+                                        response_body=None,
+                                        response_chunks=response_data.get("chunks") or [],
+                                    )
+                        except Exception as e:
+                            self._logger.exception(
+                                "proxy_stream_error method=%s target_url=%s: %s",
+                                method,
+                                target_url,
+                                e,
+                            )
+                            error_msg = f"data: {json.dumps({'error': str(e)})}\n\n"
                             response_data = {
                                 "timestamp": datetime.now().isoformat(),
-                                "status_code": response.status_code,
-                                "headers": dict(response.headers),
-                                "chunks": [],
+                                "error": str(e),
                             }
-
-                            async for chunk in response.aiter_bytes():
-                                if should_log:
-                                    try:
-                                        response_data["chunks"].append(chunk.decode("utf-8"))
-                                    except Exception:
-                                        response_data["chunks"].append(str(chunk))
-                                yield chunk
-
                             if should_log:
                                 await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
-                            if self._ledger_service and base_filename:
-                                await self._ledger_service.validate_and_record(
-                                    trace_id=base_filename,
-                                    model=requested_model,
-                                    endpoint=endpoint_path,
-                                    request_payload=payload,
-                                    response_body=None,
-                                    response_chunks=response_data.get("chunks") or [],
-                                )
-                    except Exception as e:
-                        self._logger.exception(
-                            "proxy_stream_error method=%s target_url=%s: %s",
-                            method,
-                            target_url,
-                            e,
-                        )
-                        error_msg = f"data: {json.dumps({'error': str(e)})}\n\n"
-                        response_data = {
-                            "timestamp": datetime.now().isoformat(),
-                            "error": str(e),
-                        }
-                        if should_log:
-                            await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
-                        yield error_msg.encode()
+                            yield error_msg.encode()
 
             return {
                 "type": "stream",
                 "iterator": stream_response(),
             }
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            try:
-                response = await client.request(
-                    method,
-                    target_url,
-                    headers=forward_headers,
-                    params=query_params,
-                    content=body_to_forward if body_to_forward else None,
-                )
-
-                response_data = {
-                    "timestamp": datetime.now().isoformat(),
-                    "status_code": response.status_code,
-                    "headers": dict(response.headers),
-                    "body": response.json()
-                    if response.headers.get("content-type", "").startswith("application/json")
-                    else response.text,
-                }
-                if should_log:
-                    await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
-                if self._ledger_service and base_filename:
-                    body_json = response_data.get("body") if isinstance(response_data.get("body"), dict) else None
-                    await self._ledger_service.validate_and_record(
-                        trace_id=base_filename,
-                        model=requested_model,
-                        endpoint=endpoint_path,
-                        request_payload=payload,
-                        response_body=body_json,
-                        response_chunks=[],
-                    )
-
-                if response.status_code >= 400:
-                    self._logger.warning(
-                        "proxy_upstream_error method=%s target_url=%s status=%s",
+        async with self._slot_allocator.lease(
+            selected_endpoint, correlation_id, enabled=use_slot_cache, model=slot_model
+        ) as lease:
+            content = body_to_forward
+            if lease is not None:
+                content = pin_to_slot(lease.slot)
+                if not lease.resident:
+                    await self._slot_cache.restore(selected_endpoint, correlation_id, lease.slot, slot_model)
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                try:
+                    response = await client.request(
                         method,
                         target_url,
-                        response.status_code,
+                        headers=forward_headers,
+                        params=query_params,
+                        content=content if content else None,
                     )
 
-                return {
-                    "type": "response",
-                    "content": response.content,
-                    "status_code": response.status_code,
-                    "headers": filter_response_headers(dict(response.headers)),
-                }
-            except Exception as e:
-                self._logger.exception(
-                    "proxy_request_error method=%s target_url=%s: %s",
-                    method,
-                    target_url,
-                    e,
-                )
-                response_data = {
-                    "timestamp": datetime.now().isoformat(),
-                    "error": str(e),
-                }
-                if should_log:
-                    await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
+                    response_data = {
+                        "timestamp": datetime.now().isoformat(),
+                        "status_code": response.status_code,
+                        "headers": dict(response.headers),
+                        "body": response.json()
+                        if response.headers.get("content-type", "").startswith("application/json")
+                        else response.text,
+                    }
+                    if lease is not None and response.status_code < 400:
+                        await self._slot_cache.save(selected_endpoint, correlation_id, lease.slot, slot_model)
+                    if should_log:
+                        await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
+                    if self._ledger_service and base_filename:
+                        body_json = response_data.get("body") if isinstance(response_data.get("body"), dict) else None
+                        await self._ledger_service.validate_and_record(
+                            trace_id=base_filename,
+                            model=requested_model,
+                            endpoint=endpoint_path,
+                            request_payload=payload,
+                            response_body=body_json,
+                            response_chunks=[],
+                        )
 
-                return {
-                    "type": "response",
-                    "content": json.dumps({"error": str(e)}).encode("utf-8"),
-                    "status_code": 500,
-                    "headers": {"content-type": "application/json"},
-                }
+                    if response.status_code >= 400:
+                        self._logger.warning(
+                            "proxy_upstream_error method=%s target_url=%s status=%s",
+                            method,
+                            target_url,
+                            response.status_code,
+                        )
+
+                    return {
+                        "type": "response",
+                        "content": response.content,
+                        "status_code": response.status_code,
+                        "headers": filter_response_headers(dict(response.headers)),
+                    }
+                except Exception as e:
+                    self._logger.exception(
+                        "proxy_request_error method=%s target_url=%s: %s",
+                        method,
+                        target_url,
+                        e,
+                    )
+                    response_data = {
+                        "timestamp": datetime.now().isoformat(),
+                        "error": str(e),
+                    }
+                    if should_log:
+                        await self._save_response(base_filename, response_data, correlation_id, endpoint_path)
+
+                    return {
+                        "type": "response",
+                        "content": json.dumps({"error": str(e)}).encode("utf-8"),
+                        "status_code": 500,
+                        "headers": {"content-type": "application/json"},
+                    }
 
     async def _proxy_chat_via_anthropic(
         self,
