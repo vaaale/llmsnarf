@@ -22,6 +22,7 @@ from openaiproxy.services.anthropic_translation import (
     extract_error_message,
     openai_error_body,
 )
+from openaiproxy.services.cost_recorder_service import CostRecorderService
 from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.slot_cache_service import SlotAllocator, SlotCacheService
@@ -102,6 +103,7 @@ async def save_request_trace(
     api_key: str,
     correlation_id: str | None = None,
     parent_trace_id: str | None = None,
+    provider: str | None = None,
 ) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     safe_api_key = sanitize_api_key_for_filename(api_key)
@@ -115,6 +117,7 @@ async def save_request_trace(
         "endpoint": endpoint_path,
         "correlation_id": correlation_id,
         "parent_trace_id": parent_trace_id,
+        "provider": provider,
         "headers": dict(headers),
         "payload": payload,
     }
@@ -153,6 +156,7 @@ class ProxyService:
         logger: logging.Logger,
         model_tracker: ModelTrackerService,
         ledger_service: LedgerService | None = None,
+        cost_recorder: CostRecorderService | None = None,
         slot_cache_service: SlotCacheService | None = None,
         slot_allocator: SlotAllocator | None = None,
     ):
@@ -161,6 +165,7 @@ class ProxyService:
         self._logger = logger
         self._model_tracker = model_tracker
         self._ledger_service = ledger_service
+        self._cost_recorder = cost_recorder
         self._slot_cache = slot_cache_service or SlotCacheService(logger)
         self._slot_allocator = slot_allocator or SlotAllocator(logger)
 
@@ -190,9 +195,10 @@ class ProxyService:
         headers: dict[str, str],
         api_key: str,
         correlation_id: str | None = None,
+        provider: str | None = None,
     ) -> str:
         return await save_request_trace(
-            self._trace_dir, endpoint_path, payload, headers, api_key, correlation_id
+            self._trace_dir, endpoint_path, payload, headers, api_key, correlation_id, provider=provider
         )
 
     async def _save_response(
@@ -283,7 +289,9 @@ class ProxyService:
         should_log = bool(selected_endpoint.log) and endpoint_path != "/models"
         api_key = extract_api_key(headers) if "authorization" in headers else (selected_endpoint.api_key or "unknown")
         base_filename = (
-            await self._save_request(endpoint_path, payload, headers, api_key, correlation_id)
+            await self._save_request(
+                endpoint_path, payload, headers, api_key, correlation_id, provider=selected_endpoint.name
+            )
             if should_log
             else ""
         )
@@ -321,6 +329,16 @@ class ProxyService:
             forward_headers["Authorization"] = headers["authorization"]
         elif selected_endpoint.api_key:
             forward_headers["Authorization"] = f"Bearer {selected_endpoint.api_key}"
+
+        if (
+            payload_is_json_object
+            and payload.get("stream")
+            and endpoint_path in ("/chat/completions", "/completions")
+            and selected_endpoint.protocol != "anthropic"
+            and "stream_options" not in payload
+        ):
+            payload["stream_options"] = {"include_usage": True}
+            body_to_forward = json.dumps(payload).encode("utf-8")
 
         target_url = f"{selected_endpoint.base_url}{endpoint_path}"
         is_streaming = isinstance(payload, dict) and payload.get("stream", False)
@@ -392,6 +410,15 @@ class ProxyService:
                                         response_body=None,
                                         response_chunks=response_data.get("chunks") or [],
                                     )
+                                if self._cost_recorder and base_filename:
+                                    await self._cost_recorder.record_usage(
+                                        trace_id=base_filename,
+                                        model=requested_model,
+                                        provider=selected_endpoint.name,
+                                        endpoint=endpoint_path,
+                                        response_body=None,
+                                        response_chunks=response_data.get("chunks") or [],
+                                    )
                         except Exception as e:
                             self._logger.exception(
                                 "proxy_stream_error method=%s target_url=%s: %s",
@@ -451,6 +478,15 @@ class ProxyService:
                             endpoint=endpoint_path,
                             request_payload=payload,
                             response_body=body_json,
+                            response_chunks=[],
+                        )
+                    if self._cost_recorder and base_filename:
+                        await self._cost_recorder.record_usage(
+                            trace_id=base_filename,
+                            model=requested_model,
+                            provider=selected_endpoint.name,
+                            endpoint=endpoint_path,
+                            response_body=response_data.get("body"),
                             response_chunks=[],
                         )
 
@@ -516,7 +552,7 @@ class ProxyService:
                 "type": "stream",
                 "iterator": self._anthropic_chat_stream(
                     anthropic_payload, target_url, forward_headers, model,
-                    payload, should_log, base_filename, correlation_id,
+                    payload, should_log, base_filename, correlation_id, endpoint.name,
                 ),
             }
 
@@ -609,6 +645,15 @@ class ProxyService:
                 response_body=result,
                 response_chunks=[],
             )
+        if self._cost_recorder and base_filename:
+            await self._cost_recorder.record_usage(
+                trace_id=base_filename,
+                model=payload.get("model"),
+                provider=endpoint.name,
+                endpoint="/chat/completions",
+                response_body=upstream_data,
+                response_chunks=[],
+            )
 
         return {
             "type": "response",
@@ -627,6 +672,7 @@ class ProxyService:
         should_log: bool,
         base_filename: str,
         correlation_id: str | None,
+        provider: str | None = None,
     ):
         translator = AnthropicToChatStream(model=model)
         chunks_log: list[str] = []
@@ -697,6 +743,15 @@ class ProxyService:
                     model=request_payload.get("model"),
                     endpoint="/chat/completions",
                     request_payload=request_payload,
+                    response_body=None,
+                    response_chunks=chunks_log,
+                )
+            if self._cost_recorder and base_filename:
+                await self._cost_recorder.record_usage(
+                    trace_id=base_filename,
+                    model=request_payload.get("model"),
+                    provider=provider,
+                    endpoint="/chat/completions",
                     response_body=None,
                     response_chunks=chunks_log,
                 )

@@ -26,6 +26,7 @@ import httpx
 from openaiproxy.interface.repository import LLMProxyConfigRepository
 from openaiproxy.models.models import EndpointConfig
 from openaiproxy.services.anthropic_translation import build_anthropic_headers
+from openaiproxy.services.cost_recorder_service import CostRecorderService
 from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.proxy_service import (
@@ -129,6 +130,7 @@ class EmbeddingsService:
         logger: logging.Logger,
         model_tracker: ModelTrackerService,
         ledger_service: LedgerService | None = None,
+        cost_recorder: CostRecorderService | None = None,
         local_backend: LocalEmbeddingBackend | None = None,
     ):
         self._config_repository = config_repository
@@ -136,6 +138,7 @@ class EmbeddingsService:
         self._logger = logger
         self._model_tracker = model_tracker
         self._ledger_service = ledger_service
+        self._cost_recorder = cost_recorder
         self._local_backend = local_backend or LocalEmbeddingBackend(logger)
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
@@ -196,7 +199,7 @@ class EmbeddingsService:
         api_key = extract_api_key(headers) if "authorization" in headers else (endpoint.api_key or "unknown")
         base_filename = (
             await save_request_trace(
-                self._trace_dir, EMBEDDINGS_PATH, payload, headers, api_key, correlation_id
+                self._trace_dir, EMBEDDINGS_PATH, payload, headers, api_key, correlation_id, provider=endpoint.name
             )
             if should_log
             else ""
@@ -205,7 +208,7 @@ class EmbeddingsService:
         if endpoint.mode == "local":
             return await self._embed_locally(
                 payload, str(requested_model or ""), str(forwarded_model or ""),
-                should_log, base_filename, correlation_id,
+                should_log, base_filename, correlation_id, endpoint.name,
             )
         return await self._forward(
             payload, forwarded_model, endpoint, headers,
@@ -220,13 +223,24 @@ class EmbeddingsService:
                 self._trace_dir, base_filename, response_data, correlation_id, endpoint_path=EMBEDDINGS_PATH
             )
 
-    async def _record_ledger(self, base_filename: str, payload: dict, response_body: dict | None) -> None:
+    async def _record_ledger(
+        self, base_filename: str, payload: dict, response_body: dict | None, provider: str | None = None
+    ) -> None:
         if self._ledger_service and base_filename:
             await self._ledger_service.validate_and_record(
                 trace_id=base_filename,
                 model=payload.get("model"),
                 endpoint=EMBEDDINGS_PATH,
                 request_payload=payload,
+                response_body=response_body,
+                response_chunks=[],
+            )
+        if self._cost_recorder and base_filename:
+            await self._cost_recorder.record_usage(
+                trace_id=base_filename,
+                model=payload.get("model"),
+                provider=provider,
+                endpoint=EMBEDDINGS_PATH,
                 response_body=response_body,
                 response_chunks=[],
             )
@@ -243,17 +257,18 @@ class EmbeddingsService:
         should_log: bool,
         base_filename: str,
         correlation_id: str | None,
+        provider: str | None = None,
     ) -> dict:
         if not model_id:
             return await self._fail(
                 _error_body("Request has no 'model' field"), 400,
-                should_log, base_filename, correlation_id, payload,
+                should_log, base_filename, correlation_id, payload, provider,
             )
         try:
             texts = _parse_input_texts(payload)
         except ValueError as exc:
             return await self._fail(
-                _error_body(str(exc)), 400, should_log, base_filename, correlation_id, payload
+                _error_body(str(exc)), 400, should_log, base_filename, correlation_id, payload, provider
             )
 
         try:
@@ -262,13 +277,13 @@ class EmbeddingsService:
             self._logger.error("local_embedding_unavailable model=%s: %s", model_id, exc)
             return await self._fail(
                 _error_body(str(exc), "server_error"), 501,
-                should_log, base_filename, correlation_id, payload,
+                should_log, base_filename, correlation_id, payload, provider,
             )
         except Exception as exc:
             self._logger.exception("local_embedding_error model=%s: %s", model_id, exc)
             return await self._fail(
                 _error_body(f"Local embedding failed: {exc}", "server_error"), 500,
-                should_log, base_filename, correlation_id, payload,
+                should_log, base_filename, correlation_id, payload, provider,
             )
 
         encoding_format = payload.get("encoding_format") or "float"
@@ -294,7 +309,7 @@ class EmbeddingsService:
             },
             correlation_id,
         )
-        await self._record_ledger(base_filename, payload, result)
+        await self._record_ledger(base_filename, payload, result, provider)
         return _json_response(result, 200)
 
     async def _fail(
@@ -305,6 +320,7 @@ class EmbeddingsService:
         base_filename: str,
         correlation_id: str | None,
         payload: dict,
+        provider: str | None = None,
     ) -> dict:
         await self._trace_response(
             should_log,
@@ -317,7 +333,7 @@ class EmbeddingsService:
             },
             correlation_id,
         )
-        await self._record_ledger(base_filename, payload, error)
+        await self._record_ledger(base_filename, payload, error, provider)
         return _json_response(error, status_code)
 
     # ------------------------------------------------------------------
@@ -388,7 +404,7 @@ class EmbeddingsService:
             },
             correlation_id,
         )
-        await self._record_ledger(base_filename, payload, body_json)
+        await self._record_ledger(base_filename, payload, body_json, endpoint.name)
 
         return {
             "type": "response",

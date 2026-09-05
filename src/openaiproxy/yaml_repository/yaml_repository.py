@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 from openaiproxy.interface.repository import LLMProxyConfigRepository
-from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebFetchConfig, WebSearchConfig
+from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, ModelPricing, WebFetchConfig, WebSearchConfig
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -51,6 +51,20 @@ def _parse_web_fetch(raw: object) -> WebFetchConfig:
         format=str(raw.get("format") or defaults.format),
         mode=str(raw.get("mode") or defaults.mode),
     )
+
+
+def _parse_pricing(raw: object) -> dict[str, ModelPricing]:
+    if not isinstance(raw, dict):
+        return {}
+    pricing: dict[str, ModelPricing] = {}
+    for name, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        pricing[str(name)] = ModelPricing(
+            price_input_per_million=float(entry.get("price_input_per_million") or 0.0),
+            price_output_per_million=float(entry.get("price_output_per_million") or 0.0),
+        )
+    return pricing
 
 
 class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
@@ -141,6 +155,7 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
             endpoints=endpoints,
             web_search=_parse_web_search(llmproxy.get("web_search")),
             web_fetch=_parse_web_fetch(llmproxy.get("web_fetch")),
+            pricing=_parse_pricing(llmproxy.get("pricing")),
         )
 
     def save(self, config: LLMProxyConfig) -> None:
@@ -206,6 +221,14 @@ class YAMLLLMProxyConfigRepository(LLMProxyConfigRepository):
             "mode": config.web_fetch.mode,
         }
         llmproxy["endpoints"] = endpoints
+        if config.pricing:
+            llmproxy["pricing"] = {
+                name: {
+                    "price_input_per_million": p.price_input_per_million,
+                    "price_output_per_million": p.price_output_per_million,
+                }
+                for name, p in config.pricing.items()
+            }
 
         tmp_path = self._config_path.with_suffix(".yaml.tmp")
         with open(tmp_path, "w") as f:

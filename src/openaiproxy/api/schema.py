@@ -69,6 +69,11 @@ class EndpointSchema(BaseModel):
     )
 
 
+class ModelPricingSchema(BaseModel):
+    price_input_per_million: float = 0.0
+    price_output_per_million: float = 0.0
+
+
 class ConfigResponse(BaseModel):
     host: str | None
     port: int | None
@@ -77,6 +82,7 @@ class ConfigResponse(BaseModel):
     endpoints: list[EndpointSchema]
     web_search: WebSearchSchema = Field(default_factory=WebSearchSchema)
     web_fetch: WebFetchSchema = Field(default_factory=WebFetchSchema)
+    pricing: dict[str, ModelPricingSchema] = Field(default_factory=dict)
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -125,6 +131,9 @@ class TraceSummarySchema(BaseModel):
     error: str | None
     correlation_id: str | None = None
     parent_trace_id: str | None = None
+    provider: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class TraceCallSchema(BaseModel):
@@ -170,3 +179,38 @@ class LedgerEntrySchema(BaseModel):
     model: str | None
     endpoint: str
     issues: list[ValidationIssueSchema]
+
+
+class ModelCostSchema(BaseModel):
+    model: str
+    input_tokens: int
+    output_tokens: int
+    input_cost: float
+    output_cost: float
+    total_cost: float
+    request_count: int
+    priced_request_count: int
+    avg_cost_per_request: float
+    price_input_per_million: float
+    price_output_per_million: float
+    providers: list[str]
+
+
+class CostsResponse(BaseModel):
+    models: list[ModelCostSchema]
+    total_cost: float
+    total_requests: int
+    priced_requests: int
+    avg_cost_per_request: float
+    total_input_tokens: int
+    total_output_tokens: int
+
+
+class ModelPricingUpdate(BaseModel):
+    model: str
+    price_input_per_million: float = Field(ge=0)
+    price_output_per_million: float = Field(ge=0)
+
+
+class PricingUpdateRequest(BaseModel):
+    pricing: list[ModelPricingUpdate]

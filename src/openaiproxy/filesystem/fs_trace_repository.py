@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from openaiproxy.interface.trace_repository import TraceRepository
-from openaiproxy.models.trace_models import TraceDetail, TraceSummary
+from openaiproxy.models.trace_models import TraceDetail, TraceSummary, extract_usage
 
 _TRACE_ID_RE = re.compile(r"^(?P<api_key>.+)_(?P<ts>\d{8}_\d{6}_\d{6})$")
 
@@ -77,6 +77,12 @@ class FSTraceRepository(TraceRepository):
 
         error = response_data.get("error")
 
+        response_chunks = response_data.get("chunks")
+        response_chunks = [str(c) for c in response_chunks] if isinstance(response_chunks, list) else []
+        input_tokens, output_tokens = extract_usage(response_data.get("body"), response_chunks)
+
+        provider = request_data.get("provider")
+
         return TraceSummary(
             id=trace_id,
             timestamp=str(request_data.get("timestamp", "")),
@@ -90,6 +96,9 @@ class FSTraceRepository(TraceRepository):
             error=str(error) if error is not None else None,
             correlation_id=self._correlation_id_for(request_path, request_data),
             parent_trace_id=request_data.get("parent_trace_id"),
+            provider=str(provider) if provider else None,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
 
     def _request_path(self, trace_id: str) -> Path | None:

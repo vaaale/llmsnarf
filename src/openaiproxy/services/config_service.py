@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import replace
 
 from openaiproxy.interface.repository import LLMProxyConfigRepository
-from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebFetchConfig, WebSearchConfig
+from openaiproxy.models.models import (
+    EndpointConfig,
+    LLMProxyConfig,
+    ModelPricing,
+    WebFetchConfig,
+    WebSearchConfig,
+)
 
 
 class ConfigValidationError(ValueError):
@@ -41,6 +47,30 @@ class ConfigService:
     def update_web_fetch(self, web_fetch: WebFetchConfig) -> LLMProxyConfig:
         current = self._config_repository.load()
         updated = replace(current, web_fetch=web_fetch)
+        self._config_repository.save(updated)
+        return updated
+
+    def update_pricing(self, pricing: dict[str, tuple[float, float]]) -> LLMProxyConfig:
+        current = self._config_repository.load()
+        merged = dict(current.pricing)
+        for model, (price_input, price_output) in pricing.items():
+            if not model.strip():
+                raise ConfigValidationError("Model name must not be empty")
+            merged[model] = ModelPricing(
+                price_input_per_million=max(price_input, 0.0),
+                price_output_per_million=max(price_output, 0.0),
+            )
+        updated = replace(current, pricing=merged)
+        self._config_repository.save(updated)
+        return updated
+
+    def remove_pricing(self, model: str) -> LLMProxyConfig:
+        current = self._config_repository.load()
+        if model not in current.pricing:
+            return current
+        merged = dict(current.pricing)
+        del merged[model]
+        updated = replace(current, pricing=merged)
         self._config_repository.save(updated)
         return updated
 

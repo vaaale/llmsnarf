@@ -7,8 +7,12 @@ from openaiproxy.api.schema import (
     BackendDetectResponse,
     ConfigResponse,
     ConfigUpdateRequest,
+    CostsResponse,
     EndpointSchema,
     LedgerEntrySchema,
+    ModelCostSchema,
+    ModelPricingSchema,
+    PricingUpdateRequest,
     RouteResolveResponse,
     StatsResponse,
     TraceCallSchema,
@@ -21,6 +25,7 @@ from openaiproxy.api.schema import (
 from openaiproxy.models.models import EndpointConfig, LLMProxyConfig, WebFetchConfig, WebSearchConfig
 from openaiproxy.models.trace_models import TraceSummary
 from openaiproxy.services.config_service import ConfigService, ConfigValidationError
+from openaiproxy.services.cost_service import CostService, ModelCost
 from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.slot_cache_service import probe_backend
 from openaiproxy.services.trace_service import TraceService, assemble_stream_content
@@ -38,6 +43,10 @@ def get_trace_service(request: Request) -> TraceService:
 
 def get_ledger_service(request: Request) -> LedgerService:
     return request.app.state.ledger_service
+
+
+def get_cost_service(request: Request) -> CostService:
+    return request.app.state.cost_service
 
 
 def _mask_api_key(api_key: str) -> str:
@@ -116,6 +125,13 @@ def _config_to_response(config: LLMProxyConfig) -> ConfigResponse:
             format=config.web_fetch.format,
             mode=config.web_fetch.mode,
         ),
+        pricing={
+            name: ModelPricingSchema(
+                price_input_per_million=p.price_input_per_million,
+                price_output_per_million=p.price_output_per_million,
+            )
+            for name, p in config.pricing.items()
+        },
     )
 
 
@@ -133,6 +149,9 @@ def _summary_to_schema(summary: TraceSummary) -> TraceSummarySchema:
         error=summary.error,
         correlation_id=summary.correlation_id,
         parent_trace_id=summary.parent_trace_id,
+        provider=summary.provider,
+        input_tokens=summary.input_tokens,
+        output_tokens=summary.output_tokens,
     )
 
 
@@ -344,3 +363,62 @@ def get_ledger_entry(
     if entry is None:
         raise HTTPException(status_code=404, detail="Ledger entry not found")
     return _entry_to_schema(entry)
+
+
+def _model_cost_to_schema(cost: ModelCost) -> ModelCostSchema:
+    return ModelCostSchema(
+        model=cost.model,
+        input_tokens=cost.input_tokens,
+        output_tokens=cost.output_tokens,
+        input_cost=cost.input_cost,
+        output_cost=cost.output_cost,
+        total_cost=cost.total_cost,
+        request_count=cost.request_count,
+        priced_request_count=cost.priced_request_count,
+        avg_cost_per_request=cost.avg_cost_per_request,
+        price_input_per_million=cost.price_input_per_million,
+        price_output_per_million=cost.price_output_per_million,
+        providers=cost.providers,
+    )
+
+
+@router.get("/costs", response_model=CostsResponse)
+def get_costs(
+    days: int | None = Query(default=None, ge=1, le=3650),
+    cost_service: CostService = Depends(get_cost_service),
+) -> CostsResponse:
+    report = cost_service.get_costs(days=days)
+    return CostsResponse(
+        models=[_model_cost_to_schema(m) for m in report.models],
+        total_cost=report.total_cost,
+        total_requests=report.total_requests,
+        priced_requests=report.priced_requests,
+        avg_cost_per_request=report.avg_cost_per_request,
+        total_input_tokens=report.total_input_tokens,
+        total_output_tokens=report.total_output_tokens,
+    )
+
+
+@router.put("/config/pricing", response_model=ConfigResponse)
+def update_pricing(
+    payload: PricingUpdateRequest,
+    config_service: ConfigService = Depends(get_config_service),
+) -> ConfigResponse:
+    pricing = {
+        entry.model: (entry.price_input_per_million, entry.price_output_per_million)
+        for entry in payload.pricing
+    }
+    try:
+        updated = config_service.update_pricing(pricing)
+    except ConfigValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _config_to_response(updated)
+
+
+@router.delete("/config/pricing/{model}", response_model=ConfigResponse)
+def delete_pricing(
+    model: str,
+    config_service: ConfigService = Depends(get_config_service),
+) -> ConfigResponse:
+    updated = config_service.remove_pricing(model)
+    return _config_to_response(updated)

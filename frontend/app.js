@@ -70,7 +70,7 @@ function jsonHtml(obj) {
 }
 
 /* ───────── navigation ───────── */
-const titles = { dashboard: "Dashboard", traces: "Traces", live: "Live Tail", config: "Configuration", ledger: "Validation Ledger" };
+const titles = { dashboard: "Dashboard", traces: "Traces", live: "Live Tail", config: "Configuration", ledger: "Validation Ledger", costs: "Costs" };
 document.querySelectorAll(".nav-item").forEach((item) => {
   item.onclick = () => switchView(item.dataset.view);
 });
@@ -84,6 +84,7 @@ function switchView(view) {
   if (view === "traces") loadTraces();
   if (view === "config") loadConfig();
   if (view === "ledger") loadLedger();
+  if (view === "costs") loadCosts();
 }
 
 document.getElementById("refresh-btn").onclick = () => {
@@ -1185,6 +1186,133 @@ document.getElementById("ledger-model-filter").oninput = () => {
   ledgerSearchTimer = setTimeout(loadLedger, 300);
 };
 document.getElementById("ledger-refresh").onclick = loadLedger;
+
+/* ───────── costs ───────── */
+let costDays = "";
+
+function fmtMoney(n) {
+  if (n === null || n === undefined) return "–";
+  return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: n < 1 ? 4 : 2 });
+}
+
+function fmtTokenCount(n) {
+  return (n || 0).toLocaleString();
+}
+
+function mergeModelCosts(report, config) {
+  const byName = {};
+  report.models.forEach((m) => { byName[m.model] = { ...m }; });
+  Object.keys(config.pricing).forEach((model) => {
+    if (byName[model]) return;
+    const pricing = config.pricing[model] || {};
+    byName[model] = {
+      model,
+      input_tokens: 0, output_tokens: 0,
+      input_cost: 0, output_cost: 0, total_cost: 0,
+      request_count: 0, priced_request_count: 0, avg_cost_per_request: 0,
+      price_input_per_million: pricing.price_input_per_million || 0,
+      price_output_per_million: pricing.price_output_per_million || 0,
+      providers: [],
+    };
+  });
+  return Object.values(byName).sort((a, b) => b.total_cost - a.total_cost);
+}
+
+async function loadCosts() {
+  try {
+    const [report, config] = await Promise.all([
+      apiGet("costs" + (costDays ? `?days=${costDays}` : "")),
+      apiGet("config"),
+    ]);
+
+    document.getElementById("cost-kpi-total").textContent = fmtMoney(report.total_cost);
+    document.getElementById("cost-kpi-requests").textContent = report.priced_requests.toLocaleString()
+      + (report.total_requests !== report.priced_requests ? ` / ${report.total_requests.toLocaleString()}` : "");
+    document.getElementById("cost-kpi-avg").textContent = fmtMoney(report.avg_cost_per_request);
+    document.getElementById("cost-kpi-tokens").innerHTML =
+      `${fmtTokenCount(report.total_input_tokens)}<span class="kpi-unit"> / ${fmtTokenCount(report.total_output_tokens)}</span>`;
+
+    const models = mergeModelCosts(report, config);
+    document.getElementById("costs-tbody").innerHTML = models.map((m) => `
+      <tr data-model="${esc(m.model)}">
+        <td><span class="tag model">${esc(m.model)}</span></td>
+        <td class="muted" style="font-size:12px">${m.providers.length ? esc(m.providers.join(", ")) : "–"}</td>
+        <td class="num">${m.request_count.toLocaleString()}</td>
+        <td class="num">${fmtTokenCount(m.input_tokens)}</td>
+        <td class="num">${fmtTokenCount(m.output_tokens)}</td>
+        <td class="num"><input type="number" class="price-input price-in" min="0" step="0.01" value="${m.price_input_per_million}"></td>
+        <td class="num"><input type="number" class="price-input price-out" min="0" step="0.01" value="${m.price_output_per_million}"></td>
+        <td class="num">${fmtMoney(m.total_cost)}</td>
+        <td style="display:flex;gap:6px">
+          <button class="btn" data-save-price="${esc(m.model)}">Save</button>
+          <button class="btn" data-remove-price="${esc(m.model)}" title="Remove pricing">✕</button>
+        </td>
+      </tr>`).join("") || '<tr><td colspan="9" class="empty">No usage or pricing yet.</td></tr>';
+
+    document.querySelectorAll("[data-save-price]").forEach((btn) => {
+      btn.onclick = () => savePricing(btn.dataset.savePrice);
+    });
+    document.querySelectorAll("[data-remove-price]").forEach((btn) => {
+      btn.onclick = () => removePricing(btn.dataset.removePrice);
+    });
+  } catch (e) {
+    toast("Failed to load costs: " + e.message, true);
+  }
+}
+
+async function savePricing(model) {
+  const row = document.querySelector(`#costs-tbody tr[data-model="${CSS.escape(model)}"]`);
+  if (!row) return;
+  const priceInput = parseFloat(row.querySelector(".price-in").value) || 0;
+  const priceOutput = parseFloat(row.querySelector(".price-out").value) || 0;
+  try {
+    await apiPut("config/pricing", {
+      pricing: [{ model, price_input_per_million: priceInput, price_output_per_million: priceOutput }],
+    });
+    toast(`Pricing saved for "${model}"`);
+    loadCosts();
+  } catch (e) {
+    toast("Save failed: " + e.message, true);
+  }
+}
+
+async function removePricing(model) {
+  try {
+    await apiSend("DELETE", `config/pricing/${encodeURIComponent(model)}`);
+    toast(`Pricing removed for "${model}"`);
+    loadCosts();
+  } catch (e) {
+    toast("Remove failed: " + e.message, true);
+  }
+}
+
+document.getElementById("costs-refresh").onclick = loadCosts;
+document.querySelectorAll("#cost-range .btn").forEach((btn) => {
+  btn.onclick = () => {
+    document.querySelectorAll("#cost-range .btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    costDays = btn.dataset.days;
+    loadCosts();
+  };
+});
+document.getElementById("cost-add-btn").onclick = async () => {
+  const model = document.getElementById("cost-add-model").value.trim();
+  if (!model) { toast("Enter a model name", true); return; }
+  const priceInput = parseFloat(document.getElementById("cost-add-price-in").value) || 0;
+  const priceOutput = parseFloat(document.getElementById("cost-add-price-out").value) || 0;
+  try {
+    await apiPut("config/pricing", {
+      pricing: [{ model, price_input_per_million: priceInput, price_output_per_million: priceOutput }],
+    });
+    document.getElementById("cost-add-model").value = "";
+    document.getElementById("cost-add-price-in").value = "";
+    document.getElementById("cost-add-price-out").value = "";
+    toast(`Pricing added for "${model}"`);
+    loadCosts();
+  } catch (e) {
+    toast("Add failed: " + e.message, true);
+  }
+};
 
 /* ───────── init ───────── */
 loadConfig();

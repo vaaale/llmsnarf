@@ -49,6 +49,12 @@ class WebFetchConfig:
 
 
 @dataclass(frozen=True)
+class ModelPricing:
+    price_input_per_million: float = 0.0  # $ per 1M input/prompt tokens
+    price_output_per_million: float = 0.0  # $ per 1M output/completion tokens
+
+
+@dataclass(frozen=True)
 class LLMProxyConfig:
     host: str | None
     port: int | None
@@ -57,3 +63,4 @@ class LLMProxyConfig:
     endpoints: list[EndpointConfig]
     web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     web_fetch: WebFetchConfig = field(default_factory=WebFetchConfig)
+    pricing: dict[str, ModelPricing] = field(default_factory=dict)  # keyed by model name

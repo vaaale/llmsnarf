@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from openaiproxy.api.endpoints.router_main import router as main_router
 from openaiproxy.api.endpoints.router_ui import router as ui_router
+from openaiproxy.filesystem.fs_cost_ledger_repository import FSCostLedgerRepository
 from openaiproxy.filesystem.fs_ledger_repository import FSLedgerRepository
 from openaiproxy.filesystem.fs_trace_repository import FSTraceRepository
 from openaiproxy.interface.repository import LLMProxyConfigRepository
@@ -15,6 +16,8 @@ from openaiproxy.logging_config import configure_logging
 from openaiproxy.middleware.exception_logging import ExceptionLoggingMiddleware
 from openaiproxy.services.anthropic_service import AnthropicService
 from openaiproxy.services.config_service import ConfigService
+from openaiproxy.services.cost_recorder_service import CostRecorderService
+from openaiproxy.services.cost_service import CostService
 from openaiproxy.services.embeddings_service import EmbeddingsService
 from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.model_tracker_service import ModelTrackerService
@@ -49,12 +52,19 @@ def create_app(
         logger=logger,
     )
     app.state.ledger_service = ledger_service
+    cost_ledger_repository = FSCostLedgerRepository(trace_dir=Path(trace_dir))
+    cost_recorder_service = CostRecorderService(
+        cost_ledger_repository=cost_ledger_repository,
+        logger=logger,
+    )
+    app.state.cost_recorder_service = cost_recorder_service
     app.state.proxy_service = ProxyService(
         config_repository=config_repository,
         trace_dir=Path(trace_dir),
         logger=logger,
         model_tracker=model_tracker,
         ledger_service=ledger_service,
+        cost_recorder=cost_recorder_service,
         slot_cache_service=slot_cache_service,
         slot_allocator=slot_allocator,
     )
@@ -67,6 +77,7 @@ def create_app(
         web_search_service=web_search_service,
         model_tracker=model_tracker,
         ledger_service=ledger_service,
+        cost_recorder=cost_recorder_service,
         slot_cache_service=slot_cache_service,
         slot_allocator=slot_allocator,
     )
@@ -76,6 +87,7 @@ def create_app(
         logger=logger,
         model_tracker=model_tracker,
         ledger_service=ledger_service,
+        cost_recorder=cost_recorder_service,
     )
     app.state.embeddings_service = EmbeddingsService(
         config_repository=config_repository,
@@ -83,9 +95,14 @@ def create_app(
         logger=logger,
         model_tracker=model_tracker,
         ledger_service=ledger_service,
+        cost_recorder=cost_recorder_service,
     )
     app.state.config_service = ConfigService(config_repository=config_repository)
-    app.state.trace_service = TraceService(trace_repository=FSTraceRepository(trace_dir=Path(trace_dir)))
+    trace_repository = FSTraceRepository(trace_dir=Path(trace_dir))
+    app.state.trace_service = TraceService(trace_repository=trace_repository)
+    app.state.cost_service = CostService(
+        cost_ledger_repository=cost_ledger_repository, config_service=app.state.config_service
+    )
     app.include_router(ui_router)
     app.include_router(main_router)
     if frontend_dir is not None and Path(frontend_dir).is_dir():

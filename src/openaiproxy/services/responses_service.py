@@ -22,6 +22,7 @@ from openaiproxy.services.proxy_service import (
     save_request_trace,
     save_response_trace,
 )
+from openaiproxy.services.cost_recorder_service import CostRecorderService
 from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.slot_cache_service import SlotAllocator, SlotCacheService
 from openaiproxy.services.web_search_service import (
@@ -358,6 +359,7 @@ class ResponsesService:
         web_search_service: WebSearchService,
         model_tracker: ModelTrackerService,
         ledger_service: LedgerService | None = None,
+        cost_recorder: CostRecorderService | None = None,
         slot_cache_service: SlotCacheService | None = None,
         slot_allocator: SlotAllocator | None = None,
     ):
@@ -367,6 +369,7 @@ class ResponsesService:
         self._web_search_service = web_search_service
         self._model_tracker = model_tracker
         self._ledger_service = ledger_service
+        self._cost_recorder = cost_recorder
         self._slot_cache = slot_cache_service or SlotCacheService(logger)
         self._slot_allocator = slot_allocator or SlotAllocator(logger)
 
@@ -386,6 +389,7 @@ class ResponsesService:
         correlation_id: str | None = None,
         parent_trace_id: str | None = None,
         cache_prompt: bool = False,
+        provider: str | None = None,
     ) -> str:
         # Each map/reduce call carries only the conversational context (the user's
         # question), not the accumulated raw results of previous searches — so the
@@ -436,7 +440,8 @@ class ResponsesService:
             base_fn = ""
             if should_log:
                 base_fn = await save_request_trace(
-                    self._trace_dir, endpoint, payload, forward_headers, api_key, correlation_id, parent_trace_id
+                    self._trace_dir, endpoint, payload, forward_headers, api_key, correlation_id, parent_trace_id,
+                    provider=provider,
                 )
             try:
                 async with httpx.AsyncClient(timeout=300.0) as client:
@@ -486,7 +491,8 @@ class ResponsesService:
         reduce_fn = ""
         if should_log:
             reduce_fn = await save_request_trace(
-                self._trace_dir, "/responses/map-reduce/final", reduce_payload, forward_headers, api_key, correlation_id, parent_trace_id
+                self._trace_dir, "/responses/map-reduce/final", reduce_payload, forward_headers, api_key,
+                correlation_id, parent_trace_id, provider=provider,
             )
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
@@ -598,7 +604,9 @@ class ResponsesService:
         should_log = bool(endpoint.log)
         api_key = extract_api_key(headers) if "authorization" in headers else (endpoint.api_key or "unknown")
         base_filename = (
-            await save_request_trace(self._trace_dir, "/responses", payload, headers, api_key, correlation_id)
+            await save_request_trace(
+                self._trace_dir, "/responses", payload, headers, api_key, correlation_id, provider=endpoint.name
+            )
             if should_log
             else ""
         )
@@ -825,6 +833,7 @@ class ResponsesService:
                                     web_search_config.map_reduce_reduce,
                                     context_limit=_effective_call_limit(web_search_config),
                                     should_log=should_log,
+                                    provider=endpoint.name,
                                     api_key=api_key,
                                     correlation_id=correlation_id,
                                     parent_trace_id=base_filename,
@@ -904,6 +913,15 @@ class ResponsesService:
                 model=payload.get("model"),
                 endpoint="/responses",
                 request_payload=payload,
+                response_body=result,
+                response_chunks=[],
+            )
+        if self._cost_recorder and base_filename:
+            await self._cost_recorder.record_usage(
+                trace_id=base_filename,
+                model=payload.get("model"),
+                provider=endpoint.name if endpoint else None,
+                endpoint="/responses",
                 response_body=result,
                 response_chunks=[],
             )
@@ -1272,6 +1290,7 @@ class ResponsesService:
                                         web_search_config.map_reduce_reduce,
                                         context_limit=_effective_call_limit(web_search_config),
                                         should_log=should_log,
+                                        provider=endpoint.name,
                                         api_key=api_key,
                                         correlation_id=correlation_id,
                                         parent_trace_id=base_filename,
@@ -1432,4 +1451,13 @@ class ResponsesService:
                     request_payload=payload,
                     response_body=None,
                     response_chunks=chunks_log,
+                )
+            if self._cost_recorder and base_filename:
+                await self._cost_recorder.record_usage(
+                    trace_id=base_filename,
+                    model=payload.get("model"),
+                    provider=endpoint.name if endpoint else None,
+                    endpoint="/responses",
+                    response_body={"usage": usage},
+                    response_chunks=[],
                 )

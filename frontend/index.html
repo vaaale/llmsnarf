@@ -195,6 +195,12 @@
   .add-row-btn { background: none; border: 1px dashed var(--border); color: var(--muted); border-radius: 7px; padding: 6px; width: 100%; cursor: pointer; font-size: 12px; }
   .add-row-btn:hover { color: var(--accent); border-color: var(--accent); }
   .switch-field { display: flex; align-items: center; gap: 12px; }
+  .price-input { width: 100px; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 8px; font-size: 12px; outline: none; font-family: 'JetBrains Mono', monospace; }
+  .price-input:focus { border-color: var(--accent); }
+  .cost-range { display: flex; gap: 6px; }
+  .cost-range .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  td.num { text-align: right; font-family: 'JetBrains Mono', monospace; }
+  th.num { text-align: right; }
   .toast { position: fixed; bottom: 20px; right: 14px; background: var(--green); color: #04260d; padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; opacity: 0; transform: translateY(10px); transition: all .3s; z-index: 200; pointer-events: none; }
   .toast.show { opacity: 1; transform: translateY(0); }
   .toast.error { background: var(--red); color: #fff; }
@@ -249,6 +255,10 @@
     <div class="nav-item" data-view="ledger">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       Validation Ledger
+    </div>
+    <div class="nav-item" data-view="costs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      Costs
     </div>
   </nav>
   <div class="sidebar-footer">
@@ -547,6 +557,56 @@
           <button class="btn primary" id="route-btn">Resolve route</button>
         </div>
         <div class="route-result" id="route-result" style="display:none"></div>
+      </div>
+    </section>
+
+    <!-- COSTS -->
+    <section class="view" id="view-costs">
+      <div class="filter-bar">
+        <div class="cost-range" id="cost-range">
+          <button class="btn" data-days="1">24h</button>
+          <button class="btn" data-days="7">7d</button>
+          <button class="btn" data-days="30">30d</button>
+          <button class="btn active" data-days="">All time</button>
+        </div>
+        <button class="btn" id="costs-refresh" style="margin-left:auto">⟳ Refresh</button>
+      </div>
+      <div class="kpi-grid">
+        <div class="card"><div class="kpi-label">Total cost</div><div class="kpi-value" id="cost-kpi-total">–</div></div>
+        <div class="card"><div class="kpi-label">Priced requests</div><div class="kpi-value" id="cost-kpi-requests">–</div></div>
+        <div class="card"><div class="kpi-label">Avg cost / request</div><div class="kpi-value" id="cost-kpi-avg">–</div></div>
+        <div class="card"><div class="kpi-label">Tokens (in / out)</div><div class="kpi-value" id="cost-kpi-tokens">–</div></div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <h3>Add pricing for a model</h3>
+        <div class="route-test-row">
+          <input class="search-input" id="cost-add-model" placeholder="Model name, e.g. gpt-4o">
+          <input class="price-input" id="cost-add-price-in" type="number" min="0" step="0.01" placeholder="$/1M in">
+          <input class="price-input" id="cost-add-price-out" type="number" min="0" step="0.01" placeholder="$/1M out">
+          <button class="btn primary" id="cost-add-btn">Add</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0; overflow:hidden">
+        <div class="tool-card-header">
+          <h3>Cost by model</h3>
+          <span class="muted" style="font-size:12px">Prices are $ per 1M tokens — editable inline, saved to <code>llmsnarf.yaml</code></span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th>Provider(s)</th>
+              <th class="num">Requests</th>
+              <th class="num">Input tokens</th>
+              <th class="num">Output tokens</th>
+              <th class="num">$ / 1M in</th>
+              <th class="num">$ / 1M out</th>
+              <th class="num">Total cost</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="costs-tbody"></tbody>
+        </table>
       </div>
     </section>
 
