@@ -9,10 +9,12 @@ from openaiproxy.api.schema import (
     ConfigUpdateRequest,
     CostsResponse,
     EndpointSchema,
+    IndexStatusResponse,
     LedgerEntrySchema,
     ModelCostSchema,
     ModelPricingSchema,
     PricingUpdateRequest,
+    RevisionResponse,
     RouteResolveResponse,
     StatsResponse,
     TraceCallSchema,
@@ -27,7 +29,9 @@ from openaiproxy.models.trace_models import TraceSummary
 from openaiproxy.services.config_service import ConfigService, ConfigValidationError
 from openaiproxy.services.cost_service import CostService, ModelCost
 from openaiproxy.services.ledger_service import LedgerService
+from openaiproxy.services.revision_service import RevisionService
 from openaiproxy.services.slot_cache_service import probe_backend
+from openaiproxy.services.trace_index_service import IndexStatus, TraceIndexService
 from openaiproxy.services.trace_service import TraceService, assemble_stream_content
 
 router = APIRouter(prefix="/ui/api")
@@ -47,6 +51,14 @@ def get_ledger_service(request: Request) -> LedgerService:
 
 def get_cost_service(request: Request) -> CostService:
     return request.app.state.cost_service
+
+
+def get_trace_index_service(request: Request) -> TraceIndexService:
+    return request.app.state.trace_index_service
+
+
+def get_revision_service(request: Request) -> RevisionService:
+    return request.app.state.revision_service
 
 
 def _mask_api_key(api_key: str) -> str:
@@ -329,6 +341,47 @@ def get_stats(
     trace_service: TraceService = Depends(get_trace_service),
 ) -> StatsResponse:
     return StatsResponse(**trace_service.stats(hours=hours))
+
+
+@router.get("/revision", response_model=RevisionResponse)
+def get_revision(
+    revision_service: RevisionService = Depends(get_revision_service),
+) -> RevisionResponse:
+    """Polled by the UI to detect changes without refetching anything heavy."""
+    return RevisionResponse(**revision_service.revisions())
+
+
+def _index_status_to_schema(status: IndexStatus) -> IndexStatusResponse:
+    return IndexStatusResponse(
+        ready=status.ready,
+        building=status.building,
+        indexed=status.indexed,
+        scanned=status.scanned,
+        total=status.total,
+        revision=status.revision,
+        last_build_seconds=status.last_build_seconds,
+        last_error=status.last_error,
+    )
+
+
+@router.get("/index/status", response_model=IndexStatusResponse)
+def get_index_status(
+    trace_index_service: TraceIndexService = Depends(get_trace_index_service),
+) -> IndexStatusResponse:
+    return _index_status_to_schema(trace_index_service.status())
+
+
+@router.post("/index/rebuild", response_model=IndexStatusResponse)
+def rebuild_index(
+    trace_index_service: TraceIndexService = Depends(get_trace_index_service),
+) -> IndexStatusResponse:
+    """Discard the index and re-read every trace from disk.
+
+    Returns immediately; the rebuild runs on the indexer thread. Listings keep
+    working from disk while it does.
+    """
+    trace_index_service.request_rebuild()
+    return _index_status_to_schema(trace_index_service.status())
 
 
 def _entry_to_schema(entry) -> LedgerEntrySchema:

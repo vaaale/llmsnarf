@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,6 @@ from openaiproxy.services.anthropic_translation import (
     extract_error_message,
     openai_error_body,
 )
-from openaiproxy.services.cost_recorder_service import CostRecorderService
 from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.slot_cache_service import SlotAllocator, SlotCacheService
@@ -69,12 +68,17 @@ def trace_subdir(trace_dir: Path, correlation_id: str | None, endpoint_path: str
     """Resolve the directory a trace should be written to.
 
     Traces are grouped per inbound API (traces/completion, traces/responses,
-    ...). When a correlation id is present the trace is nested one level
-    deeper so all messages of the same thread are grouped together.
+    ...) and then by day (traces/completion/2026-09-05). The day shard keeps the
+    indexer's incremental scan proportional to recent activity rather than to
+    the size of the whole corpus. When a correlation id is present the trace is
+    nested one level deeper so all messages of the same thread stay together.
+
+    Traces written before day sharding remain readable: nothing here changes how
+    traces are found, only where new ones are placed.
     """
     target = trace_dir
     if endpoint_path:
-        target = target / trace_category(endpoint_path)
+        target = target / trace_category(endpoint_path) / date.today().isoformat()
     if correlation_id:
         target = target / correlation_id
     return target
@@ -156,7 +160,6 @@ class ProxyService:
         logger: logging.Logger,
         model_tracker: ModelTrackerService,
         ledger_service: LedgerService | None = None,
-        cost_recorder: CostRecorderService | None = None,
         slot_cache_service: SlotCacheService | None = None,
         slot_allocator: SlotAllocator | None = None,
     ):
@@ -165,7 +168,6 @@ class ProxyService:
         self._logger = logger
         self._model_tracker = model_tracker
         self._ledger_service = ledger_service
-        self._cost_recorder = cost_recorder
         self._slot_cache = slot_cache_service or SlotCacheService(logger)
         self._slot_allocator = slot_allocator or SlotAllocator(logger)
 
@@ -410,15 +412,6 @@ class ProxyService:
                                         response_body=None,
                                         response_chunks=response_data.get("chunks") or [],
                                     )
-                                if self._cost_recorder and base_filename:
-                                    await self._cost_recorder.record_usage(
-                                        trace_id=base_filename,
-                                        model=requested_model,
-                                        provider=selected_endpoint.name,
-                                        endpoint=endpoint_path,
-                                        response_body=None,
-                                        response_chunks=response_data.get("chunks") or [],
-                                    )
                         except Exception as e:
                             self._logger.exception(
                                 "proxy_stream_error method=%s target_url=%s: %s",
@@ -478,15 +471,6 @@ class ProxyService:
                             endpoint=endpoint_path,
                             request_payload=payload,
                             response_body=body_json,
-                            response_chunks=[],
-                        )
-                    if self._cost_recorder and base_filename:
-                        await self._cost_recorder.record_usage(
-                            trace_id=base_filename,
-                            model=requested_model,
-                            provider=selected_endpoint.name,
-                            endpoint=endpoint_path,
-                            response_body=response_data.get("body"),
                             response_chunks=[],
                         )
 
@@ -645,15 +629,6 @@ class ProxyService:
                 response_body=result,
                 response_chunks=[],
             )
-        if self._cost_recorder and base_filename:
-            await self._cost_recorder.record_usage(
-                trace_id=base_filename,
-                model=payload.get("model"),
-                provider=endpoint.name,
-                endpoint="/chat/completions",
-                response_body=upstream_data,
-                response_chunks=[],
-            )
 
         return {
             "type": "response",
@@ -743,15 +718,6 @@ class ProxyService:
                     model=request_payload.get("model"),
                     endpoint="/chat/completions",
                     request_payload=request_payload,
-                    response_body=None,
-                    response_chunks=chunks_log,
-                )
-            if self._cost_recorder and base_filename:
-                await self._cost_recorder.record_usage(
-                    trace_id=base_filename,
-                    model=request_payload.get("model"),
-                    provider=provider,
-                    endpoint="/chat/completions",
                     response_body=None,
                     response_chunks=chunks_log,
                 )

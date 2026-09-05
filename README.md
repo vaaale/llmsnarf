@@ -209,21 +209,37 @@ Visit **`http://localhost:8080/ui`** after starting the proxy.
 | **Traces** | Full request/response inspector — conversation view, raw JSON, SSE chunks, headers |
 | **Live Tail** | Real-time stream of incoming requests |
 | **Validation Ledger** | Log of requests that failed post-response validation, grouped by issue type, with a direct link to the corresponding trace |
+| **Costs** | Token usage and spend per model, with editable per-million pricing. Totals are computed from the [trace index](#trace-index), so they cover every trace on disk — not just requests made since cost tracking was switched on |
 | **Configuration** | Add/edit/delete endpoints, toggle tracing per endpoint, configure web search/fetch, test model routing |
+
+Pages refresh themselves as new data arrives — no need to hit **Refresh**. The UI
+polls a cheap `/ui/api/revision` endpoint (a counter and two `stat()` calls) and
+only refetches a page when the data behind it actually changed. Auto-refresh
+pauses while you have a field focused, so it never edits under you, and the
+**● Live** pill in the header toggles it off entirely. The Configuration page is
+never auto-refreshed.
 
 ---
 
 ## Traces
 
-When `log: true` is set on an endpoint, every request/response pair is written to `trace_dir` as a pair of JSON files:
+When `log: true` is set on an endpoint, every request/response pair is written to `trace_dir` as a pair of JSON files, grouped by inbound API and then by day. Requests carrying an `X-Correlation-Id` are nested one level deeper so a whole thread stays together:
 
 ```
 traces/
-  sk1234_20250110_142301_000123_request.json
-  sk1234_20250110_142301_000123_response.json
+  completion/
+    2025-01-10/
+      sk1234_20250110_142301_000123_request.json
+      sk1234_20250110_142301_000123_response.json
+      my-thread-id/                                # correlation id, if supplied
+        sk1234_20250110_142302_000456_request.json
+        sk1234_20250110_142302_000456_response.json
+  responses/
+  messages/
+  embeddings/
 ```
 
-The base filename encodes the API key prefix, date, time, and microseconds. Request and response files share the same base name.
+The base filename encodes the API key prefix, date, time, and microseconds. Request and response files share the same base name. Traces written by older versions — flat, or without the day shard — are still read normally.
 
 **Request file:**
 ```json
@@ -257,6 +273,36 @@ The base filename encodes the API key prefix, date, time, and microseconds. Requ
   "chunks": ["data: {...}", "data: {...}", "data: [DONE]"]
 }
 ```
+
+### Trace index
+
+Listing traces from disk means opening every trace to read its status and token
+counts, which does not scale — at ~15 000 traces the dashboard took ~47 s to
+load. The proxy therefore maintains a SQLite index of trace metadata at
+`traces/trace_index.db`, and listing, filtering and stats are answered from it in
+single-digit milliseconds.
+
+The JSON files on disk remain authoritative; the index is a cache holding
+nothing that cannot be re-derived from them. A background thread keeps it
+current — on startup it indexes whatever was written while the proxy was down,
+then picks up new traces within a couple of seconds. Traces indexed before their
+response arrived (long streaming replies) are revisited until they complete.
+
+The first build after upgrading reads the whole trace directory and takes a
+while (~30 s for 15 000 traces). It runs in the background and the UI stays
+usable throughout, falling back to scanning disk until the index is complete.
+Subsequent starts only index what is new.
+
+Token usage is extracted once, when a trace is indexed, and the **Costs** page
+reads it from there — so costs cover every traced request, including those made
+before cost reporting existed. There is no separate cost ledger; a trace is the
+record.
+
+Use **Rebuild index** on the Traces page (or `POST /ui/api/index/rebuild`) to
+discard the index and re-read every trace. That is the way to resync after
+deleting, moving or editing trace files by hand — the incremental pass only
+looks for *new* traces and will not notice those. Deleting
+`traces/trace_index.db` has the same effect on the next start.
 
 ---
 

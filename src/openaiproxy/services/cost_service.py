@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from openaiproxy.interface.cost_ledger_repository import CostLedgerRepository
+from openaiproxy.interface.trace_index import TraceIndex
 from openaiproxy.services.config_service import ConfigService
 
 
@@ -35,13 +35,19 @@ class CostReport:
 
 
 class CostService:
-    def __init__(self, cost_ledger_repository: CostLedgerRepository, config_service: ConfigService):
-        self._cost_ledger_repository = cost_ledger_repository
+    """Token spend per model, computed from the trace index.
+
+    Usage is extracted once when a trace is indexed, so costs cover every trace
+    on disk rather than only requests seen since the proxy last started.
+    """
+
+    def __init__(self, trace_index: TraceIndex, config_service: ConfigService):
+        self._trace_index = trace_index
         self._config_service = config_service
 
     def get_costs(self, days: int | None = None) -> CostReport:
         since = (datetime.now() - timedelta(days=days)).isoformat() if days else None
-        entries = self._cost_ledger_repository.list_entries(since=since)
+        entries = self._trace_index.usage_entries(since=since)
 
         config = self._config_service.get_config()
         pricing = config.pricing

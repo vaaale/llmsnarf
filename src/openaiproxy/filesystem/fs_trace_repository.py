@@ -1,15 +1,30 @@
 from __future__ import annotations
 
-import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from openaiproxy.interface.trace_repository import TraceRepository
-from openaiproxy.models.trace_models import TraceDetail, TraceSummary, extract_usage
+import orjson
 
-_TRACE_ID_RE = re.compile(r"^(?P<api_key>.+)_(?P<ts>\d{8}_\d{6}_\d{6})$")
+from openaiproxy.interface.trace_repository import TraceRepository
+from openaiproxy.models.trace_models import TraceDetail, TraceSummary, extract_usage, parse_trace_id
+
+REQUEST_SUFFIX = "_request.json"
+RESPONSE_SUFFIX = "_response.json"
+
+# traces/<category>/<YYYY-MM-DD>/ — a grouping directory, never a correlation id.
+_DAY_SHARD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# The filename timestamp is stamped a few microseconds before the timestamp
+# written into the trace body, so range-filtering on the filename alone could
+# drop a trace that the exact comparison would have kept. A one second slack
+# makes the prefilter conservative; the precise check still runs afterwards.
+_PREFILTER_SLACK = timedelta(seconds=1)
+
+
+def trace_id_from_request_path(request_path: Path) -> str:
+    return request_path.name[: -len(REQUEST_SUFFIX)]
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -21,16 +36,53 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return None
 
 
+def with_children(detail: TraceDetail, children: list[TraceDetail]) -> TraceDetail:
+    """Attach children to a trace detail (TraceDetail is frozen)."""
+    if not children:
+        return detail
+    return TraceDetail(
+        summary=detail.summary,
+        request_headers=detail.request_headers,
+        request_payload=detail.request_payload,
+        response_headers=detail.response_headers,
+        response_body=detail.response_body,
+        response_chunks=detail.response_chunks,
+        children=children,
+    )
+
+
+def _prefilter_cutoff(since: str | None) -> str | None:
+    if not since:
+        return None
+    parsed = _parse_timestamp(since)
+    if parsed is None:
+        return None
+    return (parsed - _PREFILTER_SLACK).isoformat()
+
+
 class FSTraceRepository(TraceRepository):
+    """Reads traces straight off disk.
+
+    This is the authoritative store: every trace is a pair of JSON files. It is
+    also the slow path — building a summary means parsing the response body, and
+    response bodies are routinely hundreds of kilobytes. Prefer going through
+    the trace index for listing; this class stays the fallback and the source
+    the index is rebuilt from.
+    """
+
     def __init__(self, trace_dir: Path):
         self._trace_dir = trace_dir
 
+    @property
+    def trace_dir(self) -> Path:
+        return self._trace_dir
+
     def _read_json(self, path: Path) -> dict[str, Any] | None:
         try:
-            with open(path, "r") as f:
-                data = json.load(f)
+            with open(path, "rb") as f:
+                data = orjson.loads(f.read())
             return data if isinstance(data, dict) else None
-        except (OSError, json.JSONDecodeError):
+        except (OSError, orjson.JSONDecodeError):
             return None
 
     def _correlation_id_for(self, request_path: Path, request_data: dict[str, Any]) -> str | None:
@@ -41,21 +93,21 @@ class FSTraceRepository(TraceRepository):
             stored = request_data.get("correlation_id")
             return stored if isinstance(stored, str) and stored else None
         # Fallback for traces written before correlation ids were persisted:
-        # infer it from the parent directory name (unless it is the trace root).
+        # infer it from the parent directory name, unless that directory is the
+        # trace root or a day shard (which is a grouping, not a thread).
         parent = request_path.parent
-        if parent != self._trace_dir:
+        if parent != self._trace_dir and not _DAY_SHARD_RE.match(parent.name):
             return parent.name
         return None
 
-    def _build_summary_from_path(self, request_path: Path) -> TraceSummary | None:
+    def build_summary(self, request_path: Path) -> TraceSummary | None:
         request_data = self._read_json(request_path)
         if request_data is None:
             return None
-        trace_id = request_path.name[: -len("_request.json")]
-        response_data = self._read_json(request_path.with_name(f"{trace_id}_response.json")) or {}
+        trace_id = trace_id_from_request_path(request_path)
+        response_data = self._read_json(request_path.with_name(f"{trace_id}{RESPONSE_SUFFIX}")) or {}
 
-        match = _TRACE_ID_RE.match(trace_id)
-        api_key = match.group("api_key") if match else "unknown"
+        api_key, _ = parse_trace_id(trace_id)
 
         payload = request_data.get("payload")
         payload = payload if isinstance(payload, dict) else {}
@@ -101,25 +153,47 @@ class FSTraceRepository(TraceRepository):
             output_tokens=output_tokens,
         )
 
-    def _request_path(self, trace_id: str) -> Path | None:
-        # Traces may live either at the root or nested under a correlation-id
-        # directory, so search recursively for the matching request file.
-        flat = self._trace_dir / f"{trace_id}_request.json"
+    def has_response(self, request_path: Path) -> bool:
+        """Whether the response half of a trace has been written yet.
+
+        Streaming responses land well after the request, so a trace indexed
+        early has no status, duration or token counts until this turns true.
+        """
+        trace_id = trace_id_from_request_path(request_path)
+        return request_path.with_name(f"{trace_id}{RESPONSE_SUFFIX}").exists()
+
+    def request_path_for(self, trace_id: str) -> Path | None:
+        # Traces may live either at the root or nested under category/date/
+        # correlation-id directories, so search recursively for the match.
+        flat = self._trace_dir / f"{trace_id}{REQUEST_SUFFIX}"
         if flat.exists():
             return flat
-        for candidate in self._trace_dir.rglob(f"{trace_id}_request.json"):
+        for candidate in self._trace_dir.rglob(f"{trace_id}{REQUEST_SUFFIX}"):
             return candidate
         return None
 
-    def _iter_request_files(self) -> list[Path]:
+    def iter_request_files(self, since: str | None = None) -> list[Path]:
+        """All request files, newest first, optionally limited to ``since``.
+
+        Both the ordering and the ``since`` cut come from the filename, so no
+        trace is opened just to be discarded.
+        """
         if not self._trace_dir.exists():
             return []
-        files = list(self._trace_dir.rglob("*_request.json"))
-        return sorted(
-            files,
-            key=lambda p: p.name[: -len("_request.json")].rsplit("_", 3)[-3:],
-            reverse=True,
-        )
+        cutoff = _prefilter_cutoff(since)
+        keyed: list[tuple[str, Path]] = []
+        for path in self._trace_dir.rglob(f"*{REQUEST_SUFFIX}"):
+            _, timestamp = parse_trace_id(trace_id_from_request_path(path))
+            if timestamp is None:
+                # Unparseable id: it cannot be ordered or range-filtered, so
+                # keep it and let the exact comparison decide.
+                keyed.append(("", path))
+                continue
+            if cutoff is not None and timestamp < cutoff:
+                continue
+            keyed.append((timestamp, path))
+        keyed.sort(key=lambda item: item[0], reverse=True)
+        return [path for _, path in keyed]
 
     def _matches(
         self,
@@ -164,8 +238,8 @@ class FSTraceRepository(TraceRepository):
     ) -> list[TraceSummary]:
         results: list[TraceSummary] = []
         skipped = 0
-        for request_path in self._iter_request_files():
-            summary = self._build_summary_from_path(request_path)
+        for request_path in self.iter_request_files(since=since):
+            summary = self.build_summary(request_path)
             if summary is None:
                 continue
             if summary.endpoint == "/models":
@@ -180,13 +254,14 @@ class FSTraceRepository(TraceRepository):
                 break
         return results
 
-    def _build_detail_from_path(self, request_path: Path) -> TraceDetail | None:
-        summary = self._build_summary_from_path(request_path)
+    def build_call(self, request_path: Path) -> TraceDetail | None:
+        """One trace, without its children."""
+        summary = self.build_summary(request_path)
         if summary is None:
             return None
         request_data = self._read_json(request_path) or {}
-        trace_id = request_path.name[: -len("_request.json")]
-        response_data = self._read_json(request_path.with_name(f"{trace_id}_response.json")) or {}
+        trace_id = trace_id_from_request_path(request_path)
+        response_data = self._read_json(request_path.with_name(f"{trace_id}{RESPONSE_SUFFIX}")) or {}
         chunks = response_data.get("chunks")
         chunks = [str(c) for c in chunks] if isinstance(chunks, list) else []
         return TraceDetail(
@@ -198,38 +273,31 @@ class FSTraceRepository(TraceRepository):
             response_chunks=chunks,
         )
 
+    def build_detail(self, request_path: Path) -> TraceDetail | None:
+        detail = self.build_call(request_path)
+        if detail is None:
+            return None
+        children = self._find_children(request_path, trace_id_from_request_path(request_path))
+        return with_children(detail, children)
+
     def _find_children(self, request_path: Path, parent_trace_id: str) -> list[TraceDetail]:
         children: list[TraceDetail] = []
-        for candidate in request_path.parent.glob("*_request.json"):
+        for candidate in request_path.parent.glob(f"*{REQUEST_SUFFIX}"):
             if candidate == request_path:
                 continue
             data = self._read_json(candidate)
             if data is None or data.get("parent_trace_id") != parent_trace_id:
                 continue
-            detail = self._build_detail_from_path(candidate)
-            if detail is not None:
-                children.append(detail)
+            child = self._build_call(candidate)
+            if child is not None:
+                children.append(child)
         children.sort(key=lambda d: d.summary.timestamp)
         return children
 
     def get_trace(self, trace_id: str) -> TraceDetail | None:
         if "/" in trace_id or "\\" in trace_id or ".." in trace_id:
             return None
-        request_path = self._request_path(trace_id)
+        request_path = self.request_path_for(trace_id)
         if request_path is None:
             return None
-        detail = self._build_detail_from_path(request_path)
-        if detail is None:
-            return None
-        children = self._find_children(request_path, trace_id)
-        if children:
-            detail = TraceDetail(
-                summary=detail.summary,
-                request_headers=detail.request_headers,
-                request_payload=detail.request_payload,
-                response_headers=detail.response_headers,
-                response_body=detail.response_body,
-                response_chunks=detail.response_chunks,
-                children=children,
-            )
-        return detail
+        return self.build_detail(request_path)

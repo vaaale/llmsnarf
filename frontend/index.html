@@ -38,6 +38,11 @@
   .header-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
   .pill { background: var(--bg3); border: 1px solid var(--border); padding: 5px 12px; border-radius: 20px; font-size: 12px; color: var(--muted); }
   .pill b { color: var(--text); }
+  .pill.clickable { cursor: pointer; user-select: none; }
+  .pill.on { color: var(--green); border-color: rgba(63,185,80,.4); }
+  .pill.working { color: var(--accent); border-color: rgba(79,156,249,.4); }
+  .pill.working .spin { display: inline-block; animation: spin 1.1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .content { flex: 1; overflow-y: auto; padding: 24px; }
   .view { display: none; }
   .view.active { display: block; }
@@ -272,7 +277,8 @@
     <h1 id="view-title">Dashboard</h1>
     <div class="header-right">
       <span class="pill">Trace dir <b class="mono" id="hdr-trace-dir">…</b></span>
-      <button class="btn" id="refresh-btn">⟳ Refresh</button>
+      <span class="pill working" id="index-pill" hidden><span class="spin">⟳</span> Indexing traces…</span>
+      <span class="pill clickable on" id="live-pill" title="Auto-refresh views when their data changes. While paused, click a page in the sidebar to reload it.">● Live</span>
     </div>
   </header>
 
@@ -322,7 +328,7 @@
           <option value="error">Errors</option>
         </select>
         <select class="filter" id="f-correlation"><option value="">All threads</option></select>
-        <button class="btn" id="trace-refresh">⟳</button>
+        <button class="btn" id="index-rebuild" style="margin-left:auto" title="Discard the trace index and re-read every trace from disk. Listing keeps working while it runs.">⟳ Rebuild index</button>
       </div>
       <div class="traces-layout">
         <div class="traces-list">
@@ -372,7 +378,6 @@
     <section class="view" id="view-ledger">
       <div class="filter-bar">
         <input class="search-input" placeholder="⌕ Filter by model…" id="ledger-model-filter" style="width:200px">
-        <button class="btn" id="ledger-refresh">⟳ Refresh</button>
         <span class="muted" style="font-size:12px;margin-left:4px" id="ledger-count"></span>
       </div>
       <div class="traces-layout">
@@ -403,7 +408,7 @@
         <span class="pill">Logs <b class="mono" id="cfg-logs">…</b></span>
         <span class="pill">Traces <b class="mono" id="cfg-traces">…</b></span>
         <button class="btn primary" style="margin-left:auto" id="add-ep-btn">＋ Add endpoint</button>
-        <button class="btn" id="cfg-reload-btn">⟳ Reload</button>
+        <button class="btn" id="cfg-reload-btn" title="Re-read llmproxy.yaml from disk. This page is never auto-refreshed, so that an edit in progress is not overwritten.">⟳ Reload</button>
       </div>
       <div class="config-grid" id="config-grid"></div>
       <div class="card" style="margin-top:20px; padding:0; overflow:hidden">
@@ -569,7 +574,6 @@
           <button class="btn" data-days="30">30d</button>
           <button class="btn active" data-days="">All time</button>
         </div>
-        <button class="btn" id="costs-refresh" style="margin-left:auto">⟳ Refresh</button>
       </div>
       <div class="kpi-grid">
         <div class="card"><div class="kpi-label">Total cost</div><div class="kpi-value" id="cost-kpi-total">–</div></div>
@@ -728,6 +732,6 @@
 </div>
 
 <div class="toast" id="toast"></div>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

@@ -87,11 +87,6 @@ function switchView(view) {
   if (view === "costs") loadCosts();
 }
 
-document.getElementById("refresh-btn").onclick = () => {
-  const active = document.querySelector(".nav-item.active").dataset.view;
-  switchView(active);
-};
-
 /* ───────── dashboard ───────── */
 async function loadDashboard() {
   try {
@@ -173,7 +168,39 @@ function filterByThread(cid) {
   loadTraces();
 }
 
-async function loadTraces() {
+function tracesScroller() {
+  return document.querySelector("#view-traces .traces-list .scroll");
+}
+
+// Which threads are collapsed and which sub-calls are expanded lives only in the
+// DOM, so an auto-refresh has to lift that state out and put it back — otherwise
+// every poll would silently reset the table under the user.
+function captureTraceViewState() {
+  const collapsedThreads = [];
+  document.querySelectorAll("#traces-tbody .thread-toggle").forEach((el) => {
+    if (el.textContent === "▶") collapsedThreads.push(el.id.slice("toggle-".length));
+  });
+  const expandedParents = [];
+  document.querySelectorAll("#traces-tbody .child-toggle").forEach((el) => {
+    if (el.textContent === "▼") expandedParents.push(el.id.slice("ctoggle-".length));
+  });
+  const scroller = tracesScroller();
+  return { collapsedThreads, expandedParents, scrollTop: scroller ? scroller.scrollTop : 0 };
+}
+
+function restoreTraceViewState(state) {
+  // Children first: collapsing a thread checks whether its parent is expanded.
+  state.expandedParents.forEach((id) => {
+    if (document.getElementById("ctoggle-" + id)) toggleChildren(id);
+  });
+  state.collapsedThreads.forEach((cid) => {
+    if (document.getElementById("toggle-" + cid)) toggleThread(cid);
+  });
+  const scroller = tracesScroller();
+  if (scroller) scroller.scrollTop = state.scrollTop;
+}
+
+async function loadTraces({ preserve = false } = {}) {
   const params = new URLSearchParams({ limit: "200" });
   if (traceFilters.q) params.set("q", traceFilters.q);
   if (traceFilters.model) params.set("model", traceFilters.model);
@@ -182,8 +209,10 @@ async function loadTraces() {
   if (traceFilters.correlation_id) params.set("correlation_id", traceFilters.correlation_id);
   try {
     const traces = await apiGet("traces?" + params.toString());
+    const state = preserve ? captureTraceViewState() : null;
     populateFilterOptions(traces);
     document.getElementById("traces-tbody").innerHTML = renderGroupedTraces(traces);
+    if (state) restoreTraceViewState(state);
   } catch (e) {
     toast("Failed to load traces: " + e.message, true);
   }
@@ -320,7 +349,6 @@ document.getElementById("f-model").onchange = (e) => { traceFilters.model = e.ta
 document.getElementById("f-apikey").onchange = (e) => { traceFilters.api_key = e.target.value; loadTraces(); };
 document.getElementById("f-status").onchange = (e) => { traceFilters.status = e.target.value; loadTraces(); };
 document.getElementById("f-correlation").onchange = (e) => { traceFilters.correlation_id = e.target.value; loadTraces(); };
-document.getElementById("trace-refresh").onclick = loadTraces;
 
 async function selectTrace(id) {
   selectedTraceId = id;
@@ -648,6 +676,111 @@ async function pollTail() {
   } catch (e) { /* transient poll errors are ignored */ }
 }
 setInterval(pollTail, 3000);
+
+/* ───────── live refresh ─────────
+   Every heavy endpoint stays untouched until something actually changes. The
+   proxy exposes a /revision endpoint whose tokens are a counter and two stat()
+   calls, so polling it costs nothing; a view is only refetched when the token
+   it depends on moves. */
+
+const VIEW_SOURCES = {
+  dashboard: ["traces"],
+  traces: ["traces"],
+  ledger: ["ledger"],
+  costs: ["traces"],   // costs are derived from the trace index
+  live: [],    // drives its own tail poll
+  config: [],  // never auto-refresh a form the user may be editing
+};
+
+let liveOn = true;
+let revisions = null;
+let wasIndexing = false;
+
+function activeView() {
+  const nav = document.querySelector(".nav-item.active");
+  return nav ? nav.dataset.view : null;
+}
+
+// Never yank a select, search box or price field out from under the user.
+function userIsEditing() {
+  const el = document.activeElement;
+  if (!el) return false;
+  return ["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName) || el.isContentEditable;
+}
+
+async function updateIndexPill(indexing) {
+  const pill = document.getElementById("index-pill");
+  if (!indexing) { pill.hidden = true; return; }
+  pill.hidden = false;
+  try {
+    const s = await apiGet("index/status");
+    const progress = s.total ? ` ${s.scanned.toLocaleString()} / ${s.total.toLocaleString()}` : "…";
+    pill.innerHTML = `<span class="spin">⟳</span> Indexing traces${esc(progress)}`;
+  } catch (e) {
+    pill.innerHTML = '<span class="spin">⟳</span> Indexing traces…';
+  }
+}
+
+function refreshView(view) {
+  if (view === "dashboard") loadDashboard();
+  else if (view === "traces") loadTraces({ preserve: true });
+  else if (view === "ledger") loadLedger();
+  else if (view === "costs") loadCosts();
+}
+
+async function pollRevision() {
+  if (!liveOn) return;
+  let next;
+  try {
+    next = await apiGet("revision");
+  } catch (e) {
+    return; // transient poll errors are ignored
+  }
+
+  updateIndexPill(next.indexing);
+  const previous = revisions;
+  revisions = next;
+  if (previous === null) return; // first poll only establishes the baseline
+
+  // While a build or rebuild runs, listings come off the filesystem and the
+  // index revision churns per batch. Refetching on every bump would mean a
+  // slow query every two seconds for no new information, so wait it out and
+  // refresh once on the falling edge instead.
+  const finishedIndexing = wasIndexing && !next.indexing;
+  wasIndexing = next.indexing;
+  if (next.indexing) return;
+
+  const view = activeView();
+  const sources = VIEW_SOURCES[view] || [];
+  const changed = sources.filter((key) => previous[key] !== next[key]);
+  if (!changed.length && !finishedIndexing) return;
+  if (userIsEditing()) return;
+  refreshView(view);
+}
+setInterval(pollRevision, 2000);
+pollRevision();
+
+document.getElementById("live-pill").onclick = (e) => {
+  liveOn = !liveOn;
+  e.target.textContent = liveOn ? "● Live" : "⏸ Paused";
+  e.target.classList.toggle("on", liveOn);
+  if (liveOn) pollRevision();
+};
+
+document.getElementById("index-rebuild").onclick = async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    await apiPost("index/rebuild", {});
+    wasIndexing = true;
+    updateIndexPill(true);
+    toast("Rebuilding trace index from disk — traces stay available meanwhile");
+  } catch (err) {
+    toast("Rebuild failed: " + err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 document.getElementById("tail-toggle").onclick = (e) => {
   tailOn = !tailOn;
@@ -1185,7 +1318,6 @@ document.getElementById("ledger-model-filter").oninput = () => {
   clearTimeout(ledgerSearchTimer);
   ledgerSearchTimer = setTimeout(loadLedger, 300);
 };
-document.getElementById("ledger-refresh").onclick = loadLedger;
 
 /* ───────── costs ───────── */
 let costDays = "";
@@ -1286,7 +1418,6 @@ async function removePricing(model) {
   }
 }
 
-document.getElementById("costs-refresh").onclick = loadCosts;
 document.querySelectorAll("#cost-range .btn").forEach((btn) => {
   btn.onclick = () => {
     document.querySelectorAll("#cost-range .btn").forEach((b) => b.classList.remove("active"));

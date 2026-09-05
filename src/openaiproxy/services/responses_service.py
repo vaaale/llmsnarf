@@ -22,7 +22,6 @@ from openaiproxy.services.proxy_service import (
     save_request_trace,
     save_response_trace,
 )
-from openaiproxy.services.cost_recorder_service import CostRecorderService
 from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.slot_cache_service import SlotAllocator, SlotCacheService
 from openaiproxy.services.web_search_service import (
@@ -359,7 +358,6 @@ class ResponsesService:
         web_search_service: WebSearchService,
         model_tracker: ModelTrackerService,
         ledger_service: LedgerService | None = None,
-        cost_recorder: CostRecorderService | None = None,
         slot_cache_service: SlotCacheService | None = None,
         slot_allocator: SlotAllocator | None = None,
     ):
@@ -369,7 +367,6 @@ class ResponsesService:
         self._web_search_service = web_search_service
         self._model_tracker = model_tracker
         self._ledger_service = ledger_service
-        self._cost_recorder = cost_recorder
         self._slot_cache = slot_cache_service or SlotCacheService(logger)
         self._slot_allocator = slot_allocator or SlotAllocator(logger)
 
@@ -916,15 +913,6 @@ class ResponsesService:
                 response_body=result,
                 response_chunks=[],
             )
-        if self._cost_recorder and base_filename:
-            await self._cost_recorder.record_usage(
-                trace_id=base_filename,
-                model=payload.get("model"),
-                provider=endpoint.name if endpoint else None,
-                endpoint="/responses",
-                response_body=result,
-                response_chunks=[],
-            )
 
         if lease is not None and endpoint is not None:
             await self._slot_cache.save(
@@ -1451,13 +1439,4 @@ class ResponsesService:
                     request_payload=payload,
                     response_body=None,
                     response_chunks=chunks_log,
-                )
-            if self._cost_recorder and base_filename:
-                await self._cost_recorder.record_usage(
-                    trace_id=base_filename,
-                    model=payload.get("model"),
-                    provider=endpoint.name if endpoint else None,
-                    endpoint="/responses",
-                    response_body={"usage": usage},
-                    response_chunks=[],
                 )

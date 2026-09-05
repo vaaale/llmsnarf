@@ -7,12 +7,12 @@ from pathlib import Path
 from openaiproxy.interface.ledger_repository import LedgerRepository
 from openaiproxy.models.ledger_models import LedgerEntry, ValidationIssue
 
-_LEDGER_FILENAME = "validation_ledger.ndjson"
+LEDGER_FILENAME = "validation_ledger.ndjson"
 
 
 class FSLedgerRepository(LedgerRepository):
     def __init__(self, trace_dir: Path):
-        self._path = trace_dir / _LEDGER_FILENAME
+        self._path = trace_dir / LEDGER_FILENAME
         self._lock = threading.Lock()
 
     def append(self, entry: LedgerEntry) -> None:

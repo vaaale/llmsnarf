@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+import orjson
 
 _TRACE_CATEGORY_BY_ENDPOINT = {
     "/chat/completions": "completion",
@@ -21,6 +23,28 @@ def trace_category(endpoint_path: str) -> str:
             return category
     cleaned = path.strip("/").replace("/", "_").replace("\\", "_")
     return cleaned or "other"
+
+
+_TRACE_ID_RE = re.compile(
+    r"^(?P<api_key>.+)_(?P<date>\d{8})_(?P<time>\d{6})_(?P<micros>\d{6})$"
+)
+
+
+def parse_trace_id(trace_id: str) -> tuple[str, str | None]:
+    """Split a trace id into its ``(api_key, ISO timestamp)`` parts.
+
+    Trace ids are ``<api_key>_YYYYMMDD_HHMMSS_ffffff``. Because the timestamp is
+    embedded in the id (and therefore in the filename), callers can order traces
+    and range-filter them by time without opening a single file — which is what
+    keeps listing cheap once a trace directory grows to tens of thousands of
+    entries. Returns ``("unknown", None)`` for ids that don't match the format.
+    """
+    match = _TRACE_ID_RE.match(trace_id)
+    if not match:
+        return "unknown", None
+    date, time, micros = match.group("date"), match.group("time"), match.group("micros")
+    iso = f"{date[0:4]}-{date[4:6]}-{date[6:8]}T{time[0:2]}:{time[2:4]}:{time[4:6]}.{micros}"
+    return match.group("api_key"), iso
 
 
 @dataclass(frozen=True)
@@ -104,8 +128,8 @@ def extract_usage(response_body: Any, response_chunks: list[str] | None) -> tupl
             if not data or data == "[DONE]":
                 continue
             try:
-                event = json.loads(data)
-            except json.JSONDecodeError:
+                event = orjson.loads(data)
+            except orjson.JSONDecodeError:
                 continue
             if not isinstance(event, dict):
                 continue

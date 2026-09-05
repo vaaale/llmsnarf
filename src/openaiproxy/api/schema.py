@@ -166,6 +166,25 @@ class StatsResponse(BaseModel):
     errors_per_hour: list[int]
 
 
+class RevisionResponse(BaseModel):
+    """Opaque change tokens; the UI refetches a view when its token changes."""
+
+    traces: str
+    ledger: str
+    indexing: bool
+
+
+class IndexStatusResponse(BaseModel):
+    ready: bool
+    building: bool
+    indexed: int
+    scanned: int
+    total: int
+    revision: int
+    last_build_seconds: float | None
+    last_error: str | None
+
+
 class ValidationIssueSchema(BaseModel):
     code: str
     message: str

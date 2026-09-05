@@ -117,3 +117,67 @@ def test_stats(client: TestClient):
     body = response.json()
     assert "total" in body
     assert len(body["requests_per_hour"]) == 24
+
+
+@pytest.fixture
+def indexed_client(client: TestClient) -> TestClient:
+    """A client whose background indexer has run — exercises the SQLite path."""
+    with client as started:
+        service = started.app.state.trace_index_service
+        assert service.ready.wait(timeout=10)
+        yield started
+
+
+def test_revision_tokens_are_stable_until_something_changes(indexed_client: TestClient):
+    first = indexed_client.get("/ui/api/revision")
+    assert first.status_code == 200
+    body = first.json()
+    assert set(body) == {"traces", "ledger", "indexing"}
+    assert body["indexing"] is False
+
+    # Reading data must not move any token; that is what makes polling cheap.
+    indexed_client.get("/ui/api/traces")
+    indexed_client.get("/ui/api/stats")
+
+    assert indexed_client.get("/ui/api/revision").json() == body
+
+
+def test_revision_traces_token_moves_when_a_trace_is_indexed(indexed_client: TestClient, write_trace, tmp_path: Path):
+    before = indexed_client.get("/ui/api/revision").json()["traces"]
+
+    write_trace(tmp_path / "traces", "sk-test_20260706_120000_000001")
+    service = indexed_client.app.state.trace_index_service
+    service._index_paths(service._scan(hot_only=False))
+
+    assert indexed_client.get("/ui/api/revision").json()["traces"] != before
+
+
+def test_index_status_reports_a_completed_build(indexed_client: TestClient):
+    body = indexed_client.get("/ui/api/index/status").json()
+
+    assert body["ready"] is True
+    assert body["building"] is False
+    assert body["indexed"] == 1
+    assert body["last_error"] is None
+
+
+def test_traces_are_served_from_the_index(indexed_client: TestClient):
+    traces = indexed_client.get("/ui/api/traces").json()
+
+    assert [t["id"] for t in traces] == ["sk-test_20260706_111832_127166"]
+    assert traces[0]["model"] == "gpt-5.1"
+
+
+def test_rebuild_reindexes_and_keeps_traces_available(indexed_client: TestClient):
+    response = indexed_client.post("/ui/api/index/rebuild")
+    assert response.status_code == 200
+    # The rebuild is asynchronous, so the index reports itself as not ready.
+    assert response.json()["ready"] is False
+
+    # Listing keeps working off disk while the rebuild runs.
+    assert len(indexed_client.get("/ui/api/traces").json()) == 1
+
+    service = indexed_client.app.state.trace_index_service
+    assert service.ready.wait(timeout=10)
+    assert indexed_client.get("/ui/api/index/status").json()["indexed"] == 1
+    assert len(indexed_client.get("/ui/api/traces").json()) == 1

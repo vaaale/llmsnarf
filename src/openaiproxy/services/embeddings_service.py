@@ -26,7 +26,6 @@ import httpx
 from openaiproxy.interface.repository import LLMProxyConfigRepository
 from openaiproxy.models.models import EndpointConfig
 from openaiproxy.services.anthropic_translation import build_anthropic_headers
-from openaiproxy.services.cost_recorder_service import CostRecorderService
 from openaiproxy.services.ledger_service import LedgerService
 from openaiproxy.services.model_tracker_service import ModelTrackerService
 from openaiproxy.services.proxy_service import (
@@ -130,7 +129,6 @@ class EmbeddingsService:
         logger: logging.Logger,
         model_tracker: ModelTrackerService,
         ledger_service: LedgerService | None = None,
-        cost_recorder: CostRecorderService | None = None,
         local_backend: LocalEmbeddingBackend | None = None,
     ):
         self._config_repository = config_repository
@@ -138,7 +136,6 @@ class EmbeddingsService:
         self._logger = logger
         self._model_tracker = model_tracker
         self._ledger_service = ledger_service
-        self._cost_recorder = cost_recorder
         self._local_backend = local_backend or LocalEmbeddingBackend(logger)
 
     def _select_endpoint_for_model(self, model: str | None) -> EndpointConfig | None:
@@ -232,15 +229,6 @@ class EmbeddingsService:
                 model=payload.get("model"),
                 endpoint=EMBEDDINGS_PATH,
                 request_payload=payload,
-                response_body=response_body,
-                response_chunks=[],
-            )
-        if self._cost_recorder and base_filename:
-            await self._cost_recorder.record_usage(
-                trace_id=base_filename,
-                model=payload.get("model"),
-                provider=provider,
-                endpoint=EMBEDDINGS_PATH,
                 response_body=response_body,
                 response_chunks=[],
             )

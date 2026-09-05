@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import struct
+from datetime import date
 from pathlib import Path
 
 import httpx
@@ -101,10 +102,12 @@ def test_local_embeddings_traced_under_embeddings_folder(local_client, tmp_path:
     response = client.post("/v1/embeddings", json={"model": "my-embed", "input": "hi"})
     assert response.status_code == 200
     trace_dir = tmp_path / "traces" / "embeddings"
-    requests = list(trace_dir.glob("*_request.json"))
-    responses = list(trace_dir.glob("*_response.json"))
+    requests = list(trace_dir.rglob("*_request.json"))
+    responses = list(trace_dir.rglob("*_response.json"))
     assert len(requests) == 1
     assert len(responses) == 1
+    # Traces are sharded by day under the category folder.
+    assert requests[0].parent.name == date.today().isoformat()
     request_data = json.loads(requests[0].read_text())
     assert request_data["endpoint"] == "/embeddings"
 
@@ -168,8 +171,8 @@ def test_remote_embeddings_forwarded(tmp_path: Path, monkeypatch):
     assert seen["auth"] == "Bearer sk-upstream"
 
     trace_dir = tmp_path / "traces" / "embeddings"
-    assert len(list(trace_dir.glob("*_request.json"))) == 1
-    assert len(list(trace_dir.glob("*_response.json"))) == 1
+    assert len(list(trace_dir.rglob("*_request.json"))) == 1
+    assert len(list(trace_dir.rglob("*_response.json"))) == 1
 
 
 def test_local_endpoint_not_used_for_chat_completions(tmp_path: Path):

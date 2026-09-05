@@ -130,7 +130,7 @@ def test_models_endpoint_not_traced_or_ledgered(tmp_path: Path, monkeypatch):
         json={"model": "gpt-5.1", "messages": [{"role": "user", "content": "hi"}]},
     )
     assert response.status_code == 200
-    assert len(list((trace_dir / "completion").glob("*_request.json"))) == 1
+    assert len(list((trace_dir / "completion").rglob("*_request.json"))) == 1
 
 
 def test_cache_prompt_added_when_enabled(tmp_path: Path, monkeypatch):

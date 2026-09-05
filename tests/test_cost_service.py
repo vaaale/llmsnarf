@@ -1,4 +1,3 @@
-from openaiproxy.interface.cost_ledger_repository import CostLedgerRepository
 from openaiproxy.interface.repository import LLMProxyConfigRepository
 from openaiproxy.models.cost_models import CostUsageEntry
 from openaiproxy.models.models import LLMProxyConfig, ModelPricing
@@ -6,14 +5,13 @@ from openaiproxy.services.config_service import ConfigService
 from openaiproxy.services.cost_service import CostService
 
 
-class FakeCostLedgerRepository(CostLedgerRepository):
+class FakeTraceIndex:
+    """Only the slice of TraceIndex that CostService actually uses."""
+
     def __init__(self, entries: list[CostUsageEntry]):
         self._entries = entries
 
-    def append(self, entry: CostUsageEntry) -> None:
-        self._entries.append(entry)
-
-    def list_entries(self, since: str | None = None) -> list[CostUsageEntry]:
+    def usage_entries(self, since: str | None = None) -> list[CostUsageEntry]:
         if since is None:
             return list(self._entries)
         return [e for e in self._entries if e.timestamp >= since]
@@ -49,7 +47,7 @@ def test_get_costs_aggregates_priced_and_unpriced_requests():
     ]
     config = _make_config({"gpt-5.1": ModelPricing(price_input_per_million=2.0, price_output_per_million=8.0)})
     cost_service = CostService(
-        cost_ledger_repository=FakeCostLedgerRepository(entries),
+        trace_index=FakeTraceIndex(entries),
         config_service=ConfigService(FakeConfigRepository(config)),
     )
 
@@ -75,7 +73,7 @@ def test_get_costs_unknown_model_uses_zero_pricing():
         ),
     ]
     cost_service = CostService(
-        cost_ledger_repository=FakeCostLedgerRepository(entries),
+        trace_index=FakeTraceIndex(entries),
         config_service=ConfigService(FakeConfigRepository(_make_config({}))),
     )
 
@@ -94,7 +92,7 @@ def test_get_costs_filters_by_days():
         ),
     ]
     cost_service = CostService(
-        cost_ledger_repository=FakeCostLedgerRepository(entries),
+        trace_index=FakeTraceIndex(entries),
         config_service=ConfigService(FakeConfigRepository(_make_config({}))),
     )
 
