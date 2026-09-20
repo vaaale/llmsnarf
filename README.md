@@ -1,4 +1,4 @@
-![LLM Snarf](frontend/assets/LLM%20Snarf.png)
+![LLM Snarf](frontend/assets/LLM%20Snarf-black.png)
 
 LLM Snarf is a lightweight, self-hosted proxy for OpenAI-compatible LLM APIs. It sits between your client application and any OpenAI- or Anthropic compatible provider (local or remote), and gives you full visibility into every request and response.
 It also collects token usage and calculate the projected costs.
