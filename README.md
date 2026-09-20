@@ -1,15 +1,23 @@
 # LLM Snarf
 
-LLM Snarf is a lightweight, self-hosted proxy for OpenAI-compatible LLM APIs. It sits between your client application and any OpenAI-compatible backend (local or remote), and gives you full visibility into every request and response.
+LLM Snarf is a lightweight, self-hosted proxy for OpenAI-compatible LLM APIs. It sits between your client application and any OpenAI- or Anthropic compatible provider (local or remote), and gives you full visibility into every request and response.
+It also collects token usage and calculate the projected costs.
 
-**Intended use:** Personal or team use alongside tools like [Open WebUI](https://github.com/open-webui/open-webui), [Continue.dev](https://www.continue.dev/), or any OpenAI SDK. It is not a production API gateway — it's an observability and experimentation tool.
+## Intended use: 
+* **Access all your models from a single base url** by configuring multiple providers and route by model name
+* **Integration** for clients requiring specific model names by configuring aliases
+* **Seamless transformation** between OpenAI compatible- and Anthropic compatible APIs
+* **Turn your locally hosted models into agents** by configuring web_search and web_fetch tools
+* **Monitor prompts** from your agents [BOS (BrowserOS)](https://github.com/vaaale/browseros), [Hermes](https://github.com/nousresearch/hermes-agent), or tools like [Open WebUI](https://github.com/open-webui/open-webui), [Continue.dev](https://www.continue.dev/)
+* **Monitor token usage and costs** by configuring token prices for your proxied models 
+to debug prompts, monitor token usage and costs.
 
 **What it does:**
 - Routes requests to one or more configured backend endpoints, with model-based routing and aliasing
 - Traces every request/response pair to disk as JSON (toggle per endpoint)
 - Validates responses after the connection closes and records failures in a **Validation Ledger** for later inspection
 - Optionally injects web search and web fetch capabilities via [OpenSerp](https://github.com/karust/openserp)
-- Provides a built-in web UI for live tail, trace inspection, configuration, and the validation ledger
+- Provides a built-in web UI for live tail, trace inspection, configuration, token usage, and the validation ledger
 
 ---
 

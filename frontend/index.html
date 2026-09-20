@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LLM Proxy — Console</title>
+<title>LLM Snarf — Console</title>
 <style>
   :root {
     --bg: #0d1117; --bg2: #161b22; --bg3: #1c2330; --border: #2b3444;
@@ -21,7 +21,8 @@
 
   aside { width: 220px; min-width: 220px; background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
   .logo { padding: 18px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); }
-  .logo-mark { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+  /* Crops the mark out of the full logo lockup (symbol occupies x225-580, y199-564 of 1983x793). */
+  .logo-mark { width: 30px; height: 30px; flex-shrink: 0; background: url('assets/LLM%20Snarf.png') no-repeat -18.5px -16.4px / 163px auto; }
   .logo b { font-size: 15px; }
   .logo small { display:block; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
   nav { padding: 12px 10px; flex: 1; }
@@ -237,8 +238,8 @@
 
 <aside>
   <div class="logo">
-    <div class="logo-mark">≋</div>
-    <div><b>LLM Proxy</b><small>Console</small></div>
+    <div class="logo-mark" role="img" aria-label="LLM Snarf"></div>
+    <div><b>LLM Snarf</b><small>Console</small></div>
   </div>
   <nav>
     <div class="nav-item active" data-view="dashboard">
