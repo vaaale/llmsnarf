@@ -1153,6 +1153,13 @@ document.getElementById("modal-apply").onclick = async () => {
   const url = document.getElementById("fe-url").value.trim();
   if (!name) { toast("Endpoint name is required", true); return; }
   if (mode === "remote" && !url) { toast("Base URL is required for remote endpoints", true); return; }
+  const modelsInput = document.getElementById("fe-models-input");
+  const pendingModel = modelsInput.value.trim();
+  if (pendingModel) {
+    if (!modelChips.includes(pendingModel)) modelChips.push(pendingModel);
+    modelsInput.value = "";
+    renderChips();
+  }
   if (!modelChips.length) { toast("At least one model (or *) is required", true); return; }
   const clash = CONFIG.endpoints.some((ep, i) => ep.name === name && i !== editingIndex);
   if (clash) { toast(`An endpoint named "${name}" already exists`, true); return; }
